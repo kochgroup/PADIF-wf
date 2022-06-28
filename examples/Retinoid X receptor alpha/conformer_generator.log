@@ -1,0 +1,20 @@
+*******************************************************************
+Molecule: 
+*******************************************************************
+
+
+#Mogul file location:               /appl/ccdc/CSDS2020/CSD_2020/data
+#rotatable bonds:             42
+   #CSD rotamer library:      42 / 42
+   #user fragment library:    0 / 42
+   #no rotamer information:   0 / 42
+
+#flexible ring systems:       0
+   #CSD template library:     0 / 0
+   #no template:              0 / 0
+
+#conformers generated:        336
+#conformers after clustering: 1
+
+1
+
