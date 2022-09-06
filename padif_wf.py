@@ -1,17 +1,17 @@
 """
-Workflow to do PADIF
+Workflow to do PADIF 
 """
 import os
 import gc
 import glob
 import random
+import shutil
 import warnings
+import tempfile
 import numpy as np
 import pandas as pd
-import modin.pandas as pd_m
 from math import log
 from sys import argv
-from distributed import Client
 from ccdc import conformer
 from ccdc.docking import Docker
 from ccdc.io import MoleculeReader, MoleculeWriter
@@ -29,10 +29,25 @@ njobs = int(argv[3])
 warnings.filterwarnings("ignore")
 
 if __name__ == "__main__":
-    client = Client()
-    znc = pd_m.read_csv("/nfs/home/dvictori/Documents/zinc_fp/znc_scf.csv", sep=",")
+    dcm = pd.read_csv("/nfs/home/dvictori/Documents/DCM/DCM_prepared.csv", sep=",")
 
     def chembl_mols(chembl_id):
+        """
+        Download all molecules related with the specific target in chembl, selecting only the unique compunds with 
+        activities reported in "IC50","Ki","EC50","Kd" and each molecular weight is between 180 and 900 daltons
+
+        Parameters
+        ----------
+        chembl_id: str
+            ChEMBL id code for a specific target
+        
+        Return
+        ------
+        dfActivities: Pandas dataframe
+            A dataframe with molecules and other information related with this compunds
+        targetName: str
+            The common name reported in ChEMBL        
+        """
         activity =  new_client.activity
         target = new_client.target
         listOfActivities = activity.filter(target_chembl_id=chembl_id).filter(standard_units="nM").only(
@@ -50,7 +65,7 @@ if __name__ == "__main__":
             targetName = targetData["pref_name"][0] 
 
             ### Do a dataframe and calculate pIC50
-            dfActivities = pd_m.DataFrame(listOfActivities)
+            dfActivities = pd.DataFrame(listOfActivities)
             dfActivities = dfActivities[dfActivities['standard_type'].isin(["IC50","Ki","EC50","Kd"])]
             dfActivities = dfActivities.astype({"standard_value":float})
             dfActivities = dfActivities[dfActivities["standard_value"] > 0]
@@ -79,21 +94,33 @@ if __name__ == "__main__":
                                             "standard_units", "standard_value", "standard_type",
                                             "mol_weight","pIC\u2085\u2080"]]
 
-            ### divide data between actives and inactives
 
-            dfActives = dfActivities[:int(np.ceil(len(dfActivities)*0.25))]
-            dfInactives = dfActivities[int(np.ceil(len(dfActivities)*.25)):]
-
-            return dfActivities, dfActives, dfInactives, targetName 
+            return dfActivities, targetName 
 
     def prep_ligand_from_smiles(smiles, id, dir):
+        """
+        Prepare molecules for docking using GOLD ligandPreparation function from a smiles
+
+        Parameters
+        ----------
+        smiles: str
+            Smiles to prepare
+        id: str
+            Name or id for each molecule
+        dir: str
+            Name of directory to save the file
+        
+        Return
+        ------
+        prep_lig: mol2 file
+            Molecular file for the prepared structure
+        """
         ### molecule from smiles
         lig_molecule = Molecule.from_string(smiles, format="smiles")
-        ### Pass ligands to molecule format for GOLD, generating 3d coordinates
+        ### Pass ligands to molecule format for GOLD, generating 3D coordinates
         con_gen = conformer.ConformerGenerator()
         con_gen.settings.max_conformers = 1
         lig_mol_3d = con_gen.generate(lig_molecule)
-        ### Prepare entries, I desactivate protonation protocol, beacuse this is uncompatible with protonation_states
         ligand_prep = Docker.LigandPreparation()
         ligand_prep.settings.protonate = True
         ligand_prep.standardise_bond_types = True
@@ -105,7 +132,26 @@ if __name__ == "__main__":
 
     ### Config file function
 
-    def gold_config(protein, ref_ligand):        
+    def gold_config(protein, ref_ligand, gold_name = "gold", size = 15.0):
+        """
+        GOLD configuration file for molecular docking
+
+        Parameters
+        ----------
+        protein: pdb or mol2 file
+            Protein file for make the docking
+        ref_ligand: pdb or mol2 file
+            Reference ligand for molecular docking
+        gold_name: str
+            Name for GOLD config file
+        size: float
+            size of the grid for docking
+
+        Return
+        ------
+        Gold_config: config file
+            GOLD docking config file for make docking
+        """        
         ### Change the directory and work here
         os.chdir(path)
 
@@ -121,60 +167,121 @@ if __name__ == "__main__":
         prot_dock = settings.proteins[0]
 
         ### Select parameters to dock: binding site, fitness_function, autoscale, and others
-        settings.binding_site = settings.BindingSiteFromLigand(prot_dock, native_ligand_mol, 15.0)
+        settings.binding_site = settings.BindingSiteFromLigand(prot_dock, native_ligand_mol, size)
         settings.fitness_function = "PLP"
         settings.autoscale = 200
         settings.early_termination = False
-        settings.write_options = "NO_LOG_FILES NO_LINK_FILES NO_RNK_FILES NO_BESTRANKING_LST_FILE NO_GOLD_PROTEIN_MOL2_FILENO_LGFNAME_FILE NO_PID_FILENO_SEED_LOG_FILE NO_GOLD_ERR_FILE NO_FIT_PTS_FILES NO_GOLD_LIGAND_MOL2_FILE"
+        settings.write_options = "NO_GOLD_LOG_FILE NO_LOG_FILES NO_LINK_FILES NO_RNK_FILES NO_BESTRANKING_LST_FILE NO_GOLD_PROTEIN_MOL2_FILE NO_LGFNAME_FILE NO_PID_FILE NO_SEED_LOG_FILE NO_GOLD_ERR_FILE NO_FIT_PTS_FILES NO_GOLD_LIGAND_MOL2_FILE"
         settings.flip_amide_bonds = True
         settings.flip_pyramidal_nitrogen = True
         settings.flip_free_corners = True
 
         ### save the configuration file to modify
-        Docker.Settings.write(settings,"gold.conf")
+        Docker.Settings.write(settings,f"{gold_name}.conf")
 
         ### Add to config file "per_atom_scores"
-        with open("gold.conf", "r") as inFile:
+        with open(f"{gold_name}.conf", "r") as inFile:
             text = inFile.readlines()
 
-        with open("gold.conf", "w") as outFile:
+        with open(f"{gold_name}.conf", "w") as outFile:
             for line in text:
                 if line == "  SAVE OPTIONS\n":
                     line = line + "per_atom_scores = 1\n"
                 outFile.write(line)
-        
-        with open("gold.conf", "r") as inFile:
+
+        with open(f"{gold_name}.conf", "r") as inFile:
             text = inFile.readlines()
 
-        with open("gold.conf", "w") as outFile:
+        with open(f"{gold_name}.conf", "w") as outFile:
             for line in text:
-                outFile.write(line.replace("make_subdirs = 0\n", "make_subdirs = 1\n"))
+                if line == "  SAVE OPTIONS\n":
+                    line = line + "concatenated_output = ligand.sdf\n"
+                outFile.write(line)
+
+        with open(f"{gold_name}.conf", "r") as inFile:
+            text = inFile.readlines()
+
+        with open(f"{gold_name}.conf", "w") as outFile:
+            for line in text:
+                if line == "concatenated_output = ligand.sdf\n":
+                    line = line + "output_file_format = MACCS\n"
+                outFile.write(line)
 
     ### Docking function
 
-    def dock_mol(confFile, id, dir):
+    def dock_mol(confFile, id, dir, num_sln = 100):
+        """
+        Docking function 
+
+        Parameters
+        ----------
+        confFile: str
+            Name of the GOLD config file
+        id: str
+            Name or id for each molecule
+        dir: str
+            Name of the folder for save dockings
+        num_sln: int
+            Number of docking solutions
+        
+        Return
+        ------
+        docking_sln_file: sdf file 
+            Docking solution file in sdf
+        """
         conf = confFile
         settings = Docker.Settings.from_file(conf)
         ligand = f"{id}.mol2"
-        settings.add_ligand_file(ligand, 100)
+        settings.add_ligand_file(ligand, num_sln)
         settings.output_directory = dir
+        settings.output_file = f"{id}_sln.sdf"
         docker = Docker(settings = settings).dock(f"{dir}/{id}.conf")
         return docker
 
     ### Extract chemplp from files function
 
-    def chemplp_ext(file):    
+    def chemplp_ext(file):
+        """
+        Function for open docking solution file and extract protein score contributions
+
+        Parameters
+        ----------
+        file: mol2 or sdf file
+            File of the docking solutions
+
+        Return
+        lista: list
+            List of contributions per each atom
+        """    
         lista = []
-        with open(file) as inFile:   
+        limits = []
+        with open(file) as inFile:  
             for num, line in enumerate(inFile):
                 if "> <Gold.PLP.Protein.Score.Contributions>\n" in line:
-                    for num2, line in enumerate(inFile):
-                        if num2 < num:
-                            lista.append(line)    
+                    limits.append(num)
+                if "$$$$\n" in line:
+                    limits.append(num)
+        with open(file) as inFile:     
+            for num, line in enumerate(inFile):            
+                if num > limits[0] and num < limits[1]-1:
+                    lista.append(line)
         return lista
 
     ### Sign change without affect zeros
     def sign_change(list):
+        """
+        Function for change the sign of chemplp contributions, avoiding the change in zeros
+
+        Parameters
+        ----------
+        list: list
+            List of chemplp contributions
+        
+        Return
+        ------
+        new_list: list
+            List of chemplp contributions with the sign changed
+        """
         new_list = []
         for value in list:
             if value > 0:
@@ -186,12 +293,29 @@ if __name__ == "__main__":
 
     ### Organize chemplp values in Dataframes
 
-    def chemplp_dataframe(soln_files_names, etiquete):  
+    def chemplp_dataframe(soln_files_names, etiquete, dir):
+        """
+        Extract chemplp for multiple docking solutions files
+
+        Parameters
+        ----------
+        soln_files_names: str
+            Names of docking solution files for processing
+        etiquete: str
+            String to indetify the class of molecules
+        dir: str or path
+            Directory of files
+        
+        Return
+        ------
+        df: pandas dataframe
+            Dataframe with all interactions 
+        """  
         chempl_list = []
         ids =  []
         for name in glob.glob(soln_files_names):
             chempl_list.append(chemplp_ext(name))
-            val = name.split("gold_soln_")[1]
+            val = name.strip(f"/{dir}/")
             ids.append(val.split("_")[0])
 
         ### Organize this list and create list of list
@@ -206,11 +330,14 @@ if __name__ == "__main__":
             list_0.append(list_1)
 
         ### Pass to Dataframe
-        df = pd.DataFrame()
-        for list in list_0:
-            columns = list[0]
-            df_n = pd.DataFrame(list, columns=columns)
-            df =  df.append(df_n)
+        df = []
+        columns = []
+        for lista in list_0:
+            df.append(pd.DataFrame(lista))
+            columns.append(lista[0])
+
+        df = pd.concat(df)
+        df.columns = columns[0]
 
         ### Create a identifier of each molecule  
         counter = 0
@@ -242,7 +369,22 @@ if __name__ == "__main__":
 
     ### From chemplp datframes generate PADIF 
 
-    def padif_gen(active_df, inactive_df): 
+    def padif_gen(active_df, inactive_df):
+        """
+        Create a unique PADIF, with interactions between actives and inactive datasets
+
+        parameters
+        ----------
+        active_df: pandas dataframe
+            Dataframe with chemplp of actives compounds
+        inactive_df: pandas dataframe
+            Dataframe with chemplp of inactives compunds
+        
+        return
+        ------
+        padif: pandas dataframe
+            Dataframe with mix of interactions in the actives and inactives datasets
+        """ 
         ### Join the dataframes and do the chemplp
         df_tot = pd.concat([active_df, inactive_df])
 
@@ -267,6 +409,19 @@ if __name__ == "__main__":
     ### Generic scaffolds function
 
     def gen_scaffold(smiles):
+        """
+        Create a Generic scaffold from smiles
+
+        Parameters
+        ----------
+        smiles: str
+            Smiles to extract generic scaffold
+        
+        Return
+        ------
+        scf: str
+            Smiles for each scaffold, or errors in this calculation
+        """
         try:
             mol = Chem.MolFromSmiles(smiles)
             if mol == None:
@@ -282,7 +437,7 @@ if __name__ == "__main__":
     """
 
     ### Download the molecules and create datframes from ChEMBL
-    dfActivities, dfActives, dfInactives, targetName = chembl_mols(argv[1])
+    dfActivities, targetName = chembl_mols(argv[1])
 
     ### Delete bad strings in target name
     unaceptable_strings = ["/", "(", ")", ",", ";", ".", " "]
@@ -329,14 +484,20 @@ if __name__ == "__main__":
     with MoleculeWriter(path+f"/{prot_name}_prep.mol2") as proteinWriter:
         proteinWriter.write(prot)
 
-    ### Open ligands and create dataframe with the most important values
+    ### Create a dataframe with ligands
     dfActivities["rep_num"] = dfActivities.groupby("molecule_chembl_id").cumcount()+1
     dfActivities["id"] = dfActivities["molecule_chembl_id"].astype(str) + "-" + dfActivities["rep_num"].astype(str)
     ligands = dfActivities[["id", "canonical_smiles"]]
 
-    ### Create actives directory to work
-    act_dir = os.path.join(path, "actives")
-    os.makedirs(act_dir, exist_ok=True)
+    ### Create temporary folder to work
+    sysTemp = tempfile.gettempdir()
+    myTemp = os.path.join(sysTemp,'mytemp')
+    #You must make sure myTemp exists
+    if not os.path.exists(myTemp):
+        os.makedirs(myTemp)
+
+    #now make your temporary sub folder
+    act_dir = tempfile.mkdtemp(suffix=None,prefix='act_',dir=myTemp)
 
     ### Do the preparation in parallel
     if __name__ == "__main__":
@@ -355,53 +516,12 @@ if __name__ == "__main__":
         from multiprocessing import Pool
         pool = Pool(processes=njobs)
         for row in ligands.iloc:
-            pool.apply_async(dock_mol, ("gold.conf", row["id"], act_dir))
+            pool.apply_async(dock_mol, ("gold.conf", row["id"], act_dir, 100))
         pool.close()
         pool.join()
 
     ### Extract chemplp from best docking solutions as actives
-    act_df1 = chemplp_dataframe(f"{act_dir}/*/*_1.mol2", "Act")
-
-    ### Extract chemplp from other docking solutions as inactives
-    df1 = []
-    for num in random.sample(range(2,101), 4):
-        df1.append(chemplp_dataframe(f"{act_dir}/*/*_{num}.mol2", f"Ina_{num-1}"))
-    ina_df1 = pd.concat(df1)
-
-    ### Do the PADIF_1
-    padif_1 = padif_gen(act_df1, ina_df1)
-    padif_1.to_csv(f"{path}/{prot_name}_PADIF-1.csv", sep =",")
-
-    ### Split the molecules in chembl between actives and inactives
-    ### Open the first quartile of database as actives and create a list with ids
-
-    act_id = dfActives["molecule_chembl_id"].tolist()
-    ina_id = dfInactives["molecule_chembl_id"].tolist()
-
-    ### Do actives and inactives dataframe
-    df2 = []
-    counter = 1
-    for id in act_id:
-        try:
-            df2.append(chemplp_dataframe(f"{act_dir}/{id}*/*_1.mol2", f"Act_{counter}"))
-            counter += 1
-        except:
-            pass
-    act_df2 = pd.concat(df2, ignore_index= True)
-
-    df3 = []
-    counter = 1
-    for id in ina_id:
-        try:
-            df3.append(chemplp_dataframe(f"{act_dir}/{id}*/*_1.mol2", f"Ina_{counter}"))
-            counter += 1
-        except:
-            pass
-    ina_df2 = pd.concat(df3, ignore_index= True)
-
-    ### Do PADIF_2
-    padif_2 = padif_gen(act_df2, ina_df2)
-    padif_2.to_csv(f"{prot_name}_PADIF-2.csv", sep =",")
+    act_df = chemplp_dataframe(f"{act_dir}/*_sln.sdf", "Act", act_dir)
 
     ### Calculate the scaffolds in parallel
     if __name__=='__main__':
@@ -415,24 +535,23 @@ if __name__ == "__main__":
     ligands = ligands[ligands["scf"] != "Something else"]
 
     ### Create a list with ids between ligands_1 and Zinc and delete the rows in dataframe
-    bad_id_znc = pd_m.merge(znc, ligands, on="scf")["id_x"].unique().tolist()
-    znc_filtered = znc[~znc.id.isin(bad_id_znc)]
+    bad_id_dcm = pd.merge(dcm, ligands, on="scf")["id_x"].unique().tolist()
+    dcm_filtered = dcm[~dcm.id.isin(bad_id_dcm)]
 
     ### Select 4 times te total of active molecules from filtered Zinc
     # random.seed(1234)
-    list_index = random.sample(range(len(znc_filtered)), len(ligands)*4)
-    inactives = znc.iloc[list_index]
+    list_index = random.sample(range(len(dcm_filtered)), len(ligands)*4)
+    inactives = dcm.iloc[list_index]
 
     ### Create inactive directory
-    ina_dir = os.path.join(path, "inactives")
-    os.makedirs(ina_dir, exist_ok=True)
+    ina_dir = tempfile.mkdtemp(suffix=None,prefix='ina_',dir=myTemp)
 
     ### Do the preparation in parallel
     if __name__ == "__main__":
         from multiprocessing import Pool
         pool = Pool(processes=njobs)
         for row in inactives.iloc:
-            pool.apply_async(prep_ligand_from_smiles, (row["std_smiles"], row["id"], ina_dir))
+            pool.apply_async(prep_ligand_from_smiles, (row["smiles"], row["id"], ina_dir))
         pool.close()
         pool.join()
 
@@ -446,11 +565,28 @@ if __name__ == "__main__":
         pool.join()
 
     ### Extract chemplp from best docking solutions as actives
-    ina_df3 = chemplp_dataframe(f"{ina_dir}/*/*_1.mol2", "Ina")
+    ina_df = chemplp_dataframe(f"{ina_dir}/*_sln.sdf", "Ina", ina_dir)
 
     ### Do the PADIF_1
-    padif_3 = padif_gen(act_df1, ina_df3)
-    padif_3.to_csv(f"{path}/{prot_name}_PADIF-3.csv", sep =",")
+    padif_3 = padif_gen(act_df, ina_df)
+    padif_3.to_csv(f"{path}/{prot_name}_PADIF.csv", sep =",")
 
-    ### Delete dataframes
+    ### Create active and inactive directories and save docking files
+    act_f = os.path.join(path, "Actives")
+    os.makedirs(act_f, exist_ok=True)
+
+    for filename in glob.glob(act_dir + f"/*_sln.sdf"):
+        shutil.copy(filename, act_f)
+    
+    ### Create active directory
+    ina_f = os.path.join(path, "Inactives")
+    os.makedirs(ina_f, exist_ok=True)
+
+    for filename in glob.glob(ina_dir + f"/*_sln.sdf"):
+        shutil.copy(filename, ina_f)
+
+    ### Delete dataframes from memory
     gc.collect()
+
+    ### Delete Temporary folders
+    shutil.rmtree(myTemp)
