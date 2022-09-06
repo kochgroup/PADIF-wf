@@ -29,7 +29,10 @@ njobs = int(argv[3])
 warnings.filterwarnings("ignore")
 
 if __name__ == "__main__":
-    dcm = pd.read_csv("/nfs/home/dvictori/Documents/DCM/DCM_prepared.csv", sep=",")
+    ### Select the path 
+    parentDir = os.getcwd()
+    dcm_file = parentDir + "/files/DCM_prepared.csv"
+    dcm = pd.read_csv(dcm_file, sep=",")
 
     def chembl_mols(chembl_id):
         """
@@ -445,8 +448,6 @@ if __name__ == "__main__":
         targetName = targetName.replace(string, "_")
                 
     ### Protein preparation
-    ### Select the path
-    parentDir = os.getcwd()
     path = os.path.join(parentDir, targetName)
     os.makedirs(path)
     prot_name = targetName
