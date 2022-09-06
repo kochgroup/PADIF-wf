@@ -30,5 +30,7 @@ from sys import argv
 ### Avoid unuseful warnings 
 warnings.filterwarnings("ignore")
 
-path = os.chdir(argv[2])
-print(path)
+### Name for create a new folder / Its the name of the last folder 
+os.chdir(argv[1])
+targetName = str(argv[1]).split("/")[-2]
+print(targetName)
