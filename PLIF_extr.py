@@ -1,5 +1,5 @@
 """
-Workflow to extract PADIF, PADIF+, PROLIF, ECIF from GOLD docking results for train machine learning models
+Workflow to extract PADIF, PADIF2, PROLIF, ECIF from GOLD docking results for train machine learning models
 
 Felipe Victoria-Munoz
 
@@ -197,6 +197,118 @@ def padif_gen(active_df, inactive_df):
 
     return padif
 
+def chemplp_2(plp_protein_file, chemplp_dataframe):
+    """
+    This function extract for plp_protein file the list of atoms and its clasffication for build PADIF+
+
+    parameters
+    ----------
+    plp_proteim_file: file
+        File from docking process that conteins info from protein
+    chemplp_dataframe: pandas dataframe
+        Dataframe with chemplp contributions of protein
+    
+    return:
+    -------
+    protein_atoms: pandas dataframe
+        Dataframe with atom type and residue for each atom in protein
+    """
+    list = []
+    limits = []
+    with open(plp_protein_file) as inFile:   
+        for num, line in enumerate(inFile):
+            if "@<TRIPOS>ATOM\n" in line:
+                limits.append(num)
+            if "@<TRIPOS>BOND\n" in line:
+                limits.append(num)
+                
+    with open(plp_protein_file) as inFile: 
+        for num, line in enumerate(inFile):
+            if num > limits[0] and num < limits[1]-1:
+                    list.append(line)
+    
+    ### Generate list of list
+    list_2 = []
+    for row in list:
+        list_3 = []       
+        for value in row.split():
+            list_3.append(value)
+        list_2.append(list_3)
+
+    ### Create the dataframe
+    columns = ["atom_id", "atom", "x", "y", "z", "atom_type", "sub_id", "residue", "charge"]
+    protein_atoms = pd.DataFrame(data = list_2, columns = columns)
+    mask = protein_atoms[["charge"]].isna().all(axis=1)
+    protein_atoms.loc[mask, "atom_type":"charge"] = protein_atoms.loc[mask, "atom_type":"charge"].shift(1, axis=1)  
+    protein_atoms = protein_atoms.set_index("atom_id")
+    protein_atoms.index = protein_atoms.index.tolist()
+
+    ### Classify and add to table atom_type and res_type for see the behavior
+    atoms_id = [val-1 for val in map(int, chemplp_dataframe["AtomID"].unique().tolist())]
+    df1 = protein_atoms.iloc[atoms_id]
+
+    ### Split the residue rwo into res and number
+    df1["res"] = df1["residue"].str.slice(stop=3)
+    df1["res_num"] = df1["residue"].str.slice(start=3)
+
+    ### Create list to classify residues
+    residue_type = []
+
+    for value in df1["res"]:
+        Hydrophobic_Aliphatic = ["GLY", "ALA", "VAL", "LEU", "ILE", "PRO", "MET"]
+        Hydrophobic_Aromatic = ["PHE", "TYR", "TRP"]
+        Hydrophilic_Polar_uncharged = ["SER", "THR", "CYS", "ASN", "GLN"]
+        Hydrophilic_Acidic = ["ASP", "GLU"]
+        Hydrophilic_Basic = ["ARG", "HIS", "LYS"]
+        
+        if value in Hydrophobic_Aliphatic:
+            residue_type.append(1)
+        
+        elif value in Hydrophobic_Aromatic:
+            residue_type.append(2)
+        
+        elif value in Hydrophilic_Polar_uncharged:
+            residue_type.append(3)
+        
+        elif value in Hydrophilic_Acidic:
+            residue_type.append(4)
+        
+        elif value in Hydrophilic_Basic:
+            residue_type.append(5)
+        else:
+            residue_type.append(0)    
+
+    df1["residue_type"] = residue_type
+    df1["AtomID"] = df1.index
+    df = chemplp_dataframe.merge(df1[["AtomID","residue_type"]], how="left")
+
+    ### Clasify for type of atom
+    atom_type =[]
+
+    for value in df1["atom_type"]:
+        if value == "NONPOLAR":
+            atom_type.append(1)
+        
+        if value == "ACCEPTOR":
+            atom_type.append(2)
+        
+        if value == "DONOR":
+            atom_type.append(3)
+        
+        if value == "COORD":
+            atom_type.append(4)
+        
+        if value == "DONACC":
+            atom_type.append(5)
+        
+        if value == "METAL":
+            atom_type.append(6)
+        
+    df1["atom_type"] = atom_type
+    df = df.merge(df1[["AtomID","atom_type"]], how="left")
+
+    return df
+
 ### Avoid unuseful warnings 
 warnings.filterwarnings("ignore")
 
@@ -220,6 +332,14 @@ act_df = chemplp_dataframe(f"{act_dir}/*_sln.sdf", "Act", act_dir)
 ina_dir = [x[0] for x in os.walk(parentDir)][2]
 ina_df = chemplp_dataframe(f"{ina_dir}/*_sln.sdf", "Ina", ina_dir)
 
-### PADIF generation and save
+### Generate and save PADIF
 padif = padif_gen(act_df, ina_df)
 padif.to_csv(f"{path}/{targetName}_PADIF.csv", sep= ",")
+
+### Create a dataframe of chemplp2, with atom and residue types
+act_chemplp_2 = chemplp_2(f"{parentDir}/plp_protein.mol2", act_df)
+ina_chemplp_2 = chemplp_2(f"{parentDir}/plp_protein.mol2", ina_df)
+
+### Generate and save PADIF
+padif2 = padif_gen(act_chemplp_2, ina_chemplp_2)
+padif2.to_csv(f"{path}/{targetName}_PADIF2.csv", sep= ",")

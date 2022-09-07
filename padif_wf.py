@@ -449,7 +449,7 @@ if __name__ == "__main__":
                 
     ### Protein preparation
     path = os.path.join(parentDir, targetName)
-    os.makedirs(path)
+    os.makedirs(path, exist_ok=True)
     prot_name = targetName
 
     ### Open and prepare protein 
@@ -540,7 +540,6 @@ if __name__ == "__main__":
     dcm_filtered = dcm[~dcm.id.isin(bad_id_dcm)]
 
     ### Select 4 times te total of active molecules from filtered Zinc
-    # random.seed(1234)
     list_index = random.sample(range(len(dcm_filtered)), len(ligands)*4)
     inactives = dcm.iloc[list_index]
 
@@ -585,6 +584,9 @@ if __name__ == "__main__":
 
     for filename in glob.glob(ina_dir + f"/*_sln.sdf"):
         shutil.copy(filename, ina_f)
+
+    ### Copy plp_protein to principal folder
+    shutil.copy(f"{act_dir}/plp_protein.mol2", path)
 
     ### Delete dataframes from memory
     gc.collect()
