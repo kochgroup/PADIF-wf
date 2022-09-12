@@ -1,5 +1,16 @@
 """
-Workflow to do PADIF 
+Workflow to do PADIF, from ChEMBL code and extract a csv with interactions
+
+Parameters
+----------
+chembl_code: str
+    ChEMBL ID from target
+pdb_files: directory
+    Folder with pdb files for docking
+njobs: int
+    Number of jobs for docking
+finish_folder_name: str
+    Name of folder to save results
 """
 import os
 import gc
@@ -126,7 +137,8 @@ if __name__ == "__main__":
         lig_mol_3d = con_gen.generate(lig_molecule)
         ligand_prep = Docker.LigandPreparation()
         ligand_prep.settings.protonate = True
-        ligand_prep.standardise_bond_types = True
+        ligand_prep.settings.standardise_bond_types = True
+        ligand_prep.settings.add_hydrogens = False
         prep_lig = ligand_prep.prepare(Entry.from_molecule(lig_mol_3d[0].molecule))
         ### Write molecule 
         with MoleculeWriter(f"{dir}/{id}.mol2") as mol_writer:
@@ -448,7 +460,8 @@ if __name__ == "__main__":
         targetName = targetName.replace(string, "_")
                 
     ### Protein preparation
-    path = os.path.join(parentDir, targetName)
+    final_folder = argv[4] + "/" + targetName
+    path = os.path.join(parentDir, final_folder)
     os.makedirs(path, exist_ok=True)
     prot_name = targetName
 
