@@ -606,3 +606,7 @@ if __name__ == "__main__":
 
     ### Delete Temporary folders
     shutil.rmtree(myTemp)
+
+    ### Delete unuseful files
+    os.remove(f"{parentDir}/conformer_generator.log")
+    os.remove(f"{parentDir}/conformer_generator.warm")
