@@ -138,7 +138,6 @@ if __name__ == "__main__":
         ligand_prep = Docker.LigandPreparation()
         ligand_prep.settings.protonate = True
         ligand_prep.settings.standardise_bond_types = True
-        ligand_prep.settings.add_hydrogens = False
         prep_lig = ligand_prep.prepare(Entry.from_molecule(lig_mol_3d[0].molecule))
         ### Write molecule 
         with MoleculeWriter(f"{dir}/{id}.mol2") as mol_writer:
@@ -609,4 +608,4 @@ if __name__ == "__main__":
 
     ### Delete unuseful files
     os.remove(f"{parentDir}/conformer_generator.log")
-    os.remove(f"{parentDir}/conformer_generator.warm")
+    os.remove(f"{parentDir}/conformer_generator.warn")
