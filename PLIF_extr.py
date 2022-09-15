@@ -25,7 +25,16 @@ import warnings
 import tempfile
 import numpy as np
 import pandas as pd
+import prolif as plf
 from sys import argv
+import prolif as plf
+from tqdm import tqdm
+import MDAnalysis as mda
+from rdkit import RDLogger
+
+### Avoid warnings
+warnings.filterwarnings("ignore")
+RDLogger.DisableLog("rdApp.*")
 
 ### Useful functions
 ### Extract chemplp from files function
@@ -104,7 +113,8 @@ def chemplp_dataframe(soln_files_names, etiquete, dir):
     """  
     chempl_list = []
     ids =  []
-    for name in glob.glob(soln_files_names):
+    name = dir.split("/")[-1]
+    for name in tqdm(glob.glob(soln_files_names), desc=f"PADIF for {name} molecules"):
         chempl_list.append(chemplp_ext(name))
         val = name.strip(f"/{dir}/")
         ids.append(val.split("_")[0])
@@ -309,6 +319,137 @@ def chemplp_2(plp_protein_file, chemplp_dataframe):
 
     return df
 
+def unique(list1):
+    """
+    Create a list with unique values
+
+    Parameters
+    ----------
+    list1: list
+        List to process
+    
+    Return
+    ------
+    un_list: list
+        list with unique values
+    """
+    x = np.array(list1)
+    un_list = np.unique(x).tolist()
+    return un_list
+
+def prolif_ext(sdf_file, protein_prolif):
+    """
+    Function for extract PROLIF fingerprint from sdf docking solition files per each atom of protein
+
+    Parameters
+    ----------
+    sdf_file: str or path
+        SDF docking solution file
+    protein_prolif: pdb file
+        Protein prolif variable
+    
+    Return
+    ------
+    df: pandas dataframe
+        Dataframe with columns per each atom of protein
+    """
+    
+    # load ligands
+    path_1 = sdf_file
+    try:
+        lig_suppl = plf.sdf_supplier(path_1)
+        # generate fingerprint
+        fp = plf.Fingerprint()
+        fp.run_from_iterable(lig_suppl, protein_prolif, progress=False)
+        df = fp.to_dataframe(dtype=np.uint8)
+        df = df.reindex(sorted(df.columns), axis=1)
+        ### Select only the best conformation and delete de null rows
+        df = df[:1]
+        ### Join columns names between residue and type of interaction 
+        df.columns = df.columns.droplevel()
+        df.columns = df.columns.map('{0[0]}_{0[1]}'.format)
+        ### Search per atom the of each residue
+        df1 = fp.to_dataframe(return_atoms=True)
+        df1 = df1.T
+        ### List of atoms
+        l1 = []
+        for lista in df1.values:
+            l = []
+            for group in lista:
+                if group[1] != None:
+                    l.append(group[1])
+            l1.append(unique(l))
+        ### Unique atoms
+        atom_unq = []
+        mult_atom_indx = []
+        for idx, lista in enumerate(l1):
+            if len(lista) > 1:
+                mult_atom_indx.append(idx)
+            else:
+                atom_unq.append(lista[0])
+        ### Add atoms to columns
+        ### If exist multple interactions per atom
+        if mult_atom_indx != []:
+            ### Extract columns with one interaction per atom
+            df = df.drop(df.columns[mult_atom_indx], axis=1)
+            col_ma = [x for x in df.columns.tolist() if x not in df.columns.tolist()]
+            atom_unq_s = [str(val) for val in atom_unq]
+            list_col = df.columns.tolist()
+            df.columns = [s1 + "_"  + s2  for s1, s2 in zip(list_col, atom_unq_s)]
+            ### Delete the columns without interactions
+            df = df.loc[:, (df != 0).any(axis=0)]
+        else:
+            list_col = df.columns.tolist()
+            df.columns = [s1 + "_"  + s2  for s1, s2 in zip(list_col, atom_unq)]
+            ### Delete the columns without interactions
+            df = df.loc[:, (df != 0).any(axis=0)]
+        return df 
+    except:
+        pass
+
+def prolif_for_ML(folder, protein, types_mols=["Actives", "Inactives"]):
+    """
+    Function to pass sdf docking results to dataframe for ML classification
+
+    Parameters
+    ----------
+    path: str
+        path or directory of docking results
+    protein: pdb file
+        PDB protein file used in molecular docking
+    types_mols:
+        Names of folders where are actives and inactives molecules
+
+    Return:
+    prolif: pandas dataframe
+        Dataframe whit PROLIF intereactions classified by active and inactive
+    """
+    # load protein
+    prot = mda.Universe(protein)
+    prot = plf.Molecule.from_mda(prot)
+
+    ### Extract a list for each type of activities
+    prolif_lst = []
+    for types in types_mols:
+        prolif= []
+        for name in tqdm(glob.glob(f"{folder}/{types}/*_sln.sdf"), desc=f"PROLIF for {types} molecules"):
+            prolif.append(prolif_ext(name, prot))
+
+        ### Join all molecules in one list and add the index by activity
+        act = pd.concat(prolif)
+        act["activity"] = types[:-1]
+        act.index = [types[:3] + "_" + str(num+1) for num in range(len(act))]
+        act = act.fillna(0.0)
+        prolif_lst.append(act)
+
+    ### Join actives and inactives datafremes in one dataframe and put in the last postiion activity column
+    prolif = pd.concat(prolif_lst)
+    prolif = prolif.fillna(0.0)
+    new_cols = [col for col in prolif.columns if col != "activity"] + ["activity"]
+    prolif = prolif[new_cols]
+    
+    return prolif
+
 ### Avoid unuseful warnings 
 warnings.filterwarnings("ignore")
 
@@ -343,3 +484,13 @@ ina_chemplp_2 = chemplp_2(f"{parentDir}/plp_protein.mol2", ina_df)
 ### Generate and save PADIF
 padif2 = padif_gen(act_chemplp_2, ina_chemplp_2)
 padif2.to_csv(f"{path}/{targetName}_PADIF2.csv", sep= ",")
+print(f"PADIF and PADIF2 did for {targetName}")
+
+### Convert protein mol2 file to pdb file
+prot_mol2 = mda.Universe(f"{parentDir}/{targetName}_prep.mol2")
+with mda.Writer(f"{path}/{targetName}.pdb") as pdb:
+    pdb.write(prot_mol2)
+
+### PROLIF from results
+prolif = prolif_for_ML(argv[1], f"{path}/{targetName}.pdb")
+prolif.to_csv(f"{path}/{targetName}_PROLIF.csv", sep= ",")
