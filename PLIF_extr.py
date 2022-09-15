@@ -13,7 +13,11 @@ argv[2]: dir
 Return
 ------
 PADIF: csv 
-    Table with PADIF fingerprint in a csv file
+    Table with PADIF fingerprint in a csv file - ref "10.1186/s13321-018-0264-0"
+PADIF2: csv 
+    Table with PADIF2 (PADIF + Residues and atoms classifications) fingerprint in a csv file
+PROLIF: csv
+    Table with PROLIF fingerprint in a csv file - ref "10.1186/s13321-021-00548-6"
 """
 
 import os
