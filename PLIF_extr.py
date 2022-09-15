@@ -12,12 +12,14 @@ argv[2]: dir
 
 Return
 ------
-PADIF: csv 
+PADIF: csv file 
     Table with PADIF fingerprint in a csv file - ref "10.1186/s13321-018-0264-0"
-PADIF2: csv 
+PADIF2: csv file
     Table with PADIF2 (PADIF + Residues and atoms classifications) fingerprint in a csv file
-PROLIF: csv
+PROLIF: csv file
     Table with PROLIF fingerprint in a csv file - ref "10.1186/s13321-021-00548-6"
+ECIF: csv file
+    Table with ECIF fingerprint in a csv file - ref "10.1093/bioinformatics/btaa982"
 """
 
 import os
@@ -659,7 +661,7 @@ ina_chemplp_2 = chemplp_2(f"{parentDir}/plp_protein.mol2", ina_df)
 ### Generate and save PADIF
 padif2 = padif_gen(act_chemplp_2, ina_chemplp_2)
 padif2.to_csv(f"{path}/{targetName}_PADIF2.csv", sep= ",")
-print(f"PADIF and PADIF2 did for {targetName}")
+print(f"PADIF and PADIF2 made for {targetName}")
 
 ### Convert protein mol2 file to pdb file
 prot_mol2 = mda.Universe(f"{parentDir}/{targetName}_prep.mol2")
