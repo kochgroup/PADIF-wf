@@ -1,7 +1,7 @@
 """
 Workflow to extract PADIF, PADIF2, PROLIF, ECIF from GOLD docking results for train machine learning models
 
-Felipe Victoria-Munoz
+Felipe Victoria-Muñoz
 
 Parameters
 ----------
@@ -35,6 +35,11 @@ import prolif as plf
 from tqdm import tqdm
 import MDAnalysis as mda
 from rdkit import RDLogger
+from os import listdir
+from rdkit import Chem
+from scipy.spatial.distance import cdist
+from itertools import product
+from rdkit.ML.Descriptors.MoleculeDescriptors import MolecularDescriptorCalculator
 
 ### Avoid warnings
 warnings.filterwarnings("ignore")
@@ -134,7 +139,7 @@ def chemplp_dataframe(soln_files_names, etiquete, dir):
             list_1.append(list_2)
         list_0.append(list_1)
 
-    ### Pass to Dataframe
+    ### Get Dataframe
     df = []
     columns = []
     for lista in list_0:
@@ -323,6 +328,8 @@ def chemplp_2(plp_protein_file, chemplp_dataframe):
 
     return df
 
+### PROLIF calculation
+
 def unique(list1):
     """
     Create a list with unique values
@@ -413,7 +420,7 @@ def prolif_ext(sdf_file, protein_prolif):
 
 def prolif_for_ML(folder, protein, types_mols=["Actives", "Inactives"]):
     """
-    Function to pass sdf docking results to dataframe for ML classification
+    Function to get sdf docking results to dataframe for ML classification
 
     Parameters
     ----------
@@ -426,7 +433,7 @@ def prolif_for_ML(folder, protein, types_mols=["Actives", "Inactives"]):
 
     Return:
     prolif: pandas dataframe
-        Dataframe whit PROLIF intereactions classified by active and inactive
+        Dataframe with PROLIF intereactions classified by active and inactive
     """
     # load protein
     prot = mda.Universe(protein)
@@ -454,8 +461,172 @@ def prolif_for_ML(folder, protein, types_mols=["Actives", "Inactives"]):
     
     return prolif
 
-### Avoid unuseful warnings 
-warnings.filterwarnings("ignore")
+### ECIF calculation
+
+# Possible predefined protein atoms
+ECIF_ProteinAtoms = ['C;4;1;3;0;0', 'C;4;2;1;1;1', 'C;4;2;2;0;0', 'C;4;2;2;0;1',
+                     'C;4;3;0;0;0', 'C;4;3;0;1;1', 'C;4;3;1;0;0', 'C;4;3;1;0;1',
+                     'C;5;3;0;0;0', 'C;6;3;0;0;0', 'N;3;1;2;0;0', 'N;3;2;0;1;1',
+                     'N;3;2;1;0;0', 'N;3;2;1;1;1', 'N;3;3;0;0;1', 'N;4;1;2;0;0',
+                     'N;4;1;3;0;0', 'N;4;2;1;0;0', 'O;2;1;0;0;0', 'O;2;1;1;0;0',
+                     'S;2;1;1;0;0', 'S;2;2;0;0;0']
+
+# Possible ligand atoms according to the PDBbind 2016 "refined set"
+ECIF_LigandAtoms = ['Br;1;1;0;0;0', 'C;3;3;0;1;1', 'C;4;1;1;0;0', 'C;4;1;2;0;0',
+                     'C;4;1;3;0;0', 'C;4;2;0;0;0', 'C;4;2;1;0;0', 'C;4;2;1;0;1',
+                     'C;4;2;1;1;1', 'C;4;2;2;0;0', 'C;4;2;2;0;1', 'C;4;3;0;0;0',
+                     'C;4;3;0;0;1', 'C;4;3;0;1;1', 'C;4;3;1;0;0', 'C;4;3;1;0;1',
+                     'C;4;4;0;0;0', 'C;4;4;0;0;1', 'C;5;3;0;0;0', 'C;5;3;0;1;1',
+                     'C;6;3;0;0;0', 'Cl;1;1;0;0;0', 'F;1;1;0;0;0', 'I;1;1;0;0;0',
+                     'N;3;1;0;0;0', 'N;3;1;1;0;0', 'N;3;1;2;0;0', 'N;3;2;0;0;0',
+                     'N;3;2;0;0;1', 'N;3;2;0;1;1', 'N;3;2;1;0;0', 'N;3;2;1;0;1',
+                     'N;3;2;1;1;1', 'N;3;3;0;0;0', 'N;3;3;0;0;1', 'N;3;3;0;1;1',
+                     'N;4;1;2;0;0', 'N;4;1;3;0;0', 'N;4;2;1;0;0', 'N;4;2;2;0;0',
+                     'N;4;2;2;0;1', 'N;4;3;0;0;0', 'N;4;3;0;0;1', 'N;4;3;1;0;0',
+                     'N;4;3;1;0;1', 'N;4;4;0;0;0', 'N;4;4;0;0;1', 'N;5;2;0;0;0',
+                     'N;5;3;0;0;0', 'N;5;3;0;1;1', 'O;2;1;0;0;0', 'O;2;1;1;0;0',
+                     'O;2;2;0;0;0', 'O;2;2;0;0;1', 'O;2;2;0;1;1', 'P;5;4;0;0;0',
+                     'P;6;4;0;0;0', 'P;6;4;0;0;1', 'P;7;4;0;0;0', 'S;2;1;0;0;0',
+                     'S;2;1;1;0;0', 'S;2;2;0;0;0', 'S;2;2;0;0;1', 'S;2;2;0;1;1',
+                     'S;3;3;0;0;0', 'S;3;3;0;0;1', 'S;4;3;0;0;0', 'S;6;4;0;0;0',
+                     'S;6;4;0;0;1', 'S;7;4;0;0;0', 'B;3;3;0;0;0', 'B;3;3;0;0;1']
+
+PossibleECIF = [i[0]+"-"+i[1] for i in product(ECIF_ProteinAtoms, ECIF_LigandAtoms)]
+
+# Atom keys
+parentDir = os.getcwd()
+ak_file = parentDir + "/files/PDB_Atom_Keys.csv"
+Atom_Keys=pd.read_csv(ak_file, sep=",")
+
+def GetAtomType(atom):
+# This function takes an atom in a molecule and returns its type as defined for ECIF
+    
+    AtomType = [atom.GetSymbol(),
+                str(atom.GetExplicitValence()),
+                str(len([x.GetSymbol() for x in atom.GetNeighbors() if x.GetSymbol() != "H"])),
+                str(len([x.GetSymbol() for x in atom.GetNeighbors() if x.GetSymbol() == "H"])),
+                str(int(atom.GetIsAromatic())),
+                str(int(atom.IsInRing())), 
+               ]
+
+    return(";".join(AtomType))
+
+def LoadSDFasDF(SDF):
+# This function takes an SDF for a ligand as input and returns it as a pandas DataFrame with its atom types labeled according to ECIF
+    
+    m = Chem.MolFromMolFile(SDF, sanitize=False)
+    m.UpdatePropertyCache(strict=False)
+    
+    ECIF_atoms = []
+
+    for atom in m.GetAtoms():
+        if atom.GetSymbol() != "H": # Include only non-hydrogen atoms
+            entry = [int(atom.GetIdx())]
+            entry.append(GetAtomType(atom))
+            pos = m.GetConformer().GetAtomPosition(atom.GetIdx())
+            entry.append(float("{0:.4f}".format(pos.x)))
+            entry.append(float("{0:.4f}".format(pos.y)))
+            entry.append(float("{0:.4f}".format(pos.z)))
+            ECIF_atoms.append(entry)
+
+    df = pd.DataFrame(ECIF_atoms)
+    df.columns = ["ATOM_INDEX", "ECIF_ATOM_TYPE","X","Y","Z"]
+    # if len(set(df["ECIF_ATOM_TYPE"]) - set(ECIF_LigandAtoms)) > 0:
+    #     print("WARNING: Ligand contains unsupported atom types. Only supported atom-type pairs are counted.")
+    
+    return(df)
+
+def LoadPDBasDF(PDB):
+# This function takes a PDB for a protein as input and returns it as a pandas DataFrame with its atom types labeled according to ECIF
+
+    ECIF_atoms = []
+    
+    f = open(PDB)
+    for i in f:
+        if i[:4] == "ATOM":
+            # Include only non-hydrogen atoms
+            if (len(i[12:16].replace(" ","")) < 4 and i[12:16].replace(" ","")[0] != "H") or (len(i[12:16].replace(" ","")) == 4 and i[12:16].replace(" ","")[1] != "H" and i[12:16].replace(" ","")[0] != "H"):
+                ECIF_atoms.append([int(i[6:11]),
+                         i[17:20]+"-"+i[12:16].replace(" ",""),
+                         float(i[30:38]),
+                         float(i[38:46]),
+                         float(i[46:54])
+                        ])
+                
+    f.close()
+    
+    df = pd.DataFrame(ECIF_atoms, columns=["ATOM_INDEX","PDB_ATOM","X","Y","Z"])
+    df = df.merge(Atom_Keys, left_on='PDB_ATOM', right_on='PDB_ATOM')[["ATOM_INDEX", "ECIF_ATOM_TYPE", "X", "Y", "Z"]].sort_values(by="ATOM_INDEX").reset_index(drop=True)
+    if list(df["ECIF_ATOM_TYPE"].isna()).count(True) > 0:
+        print("WARNING: Protein contains unsupported atom types. Only supported atom-type pairs are counted.")
+    return(df)
+
+def GetPLPairs(PDB_protein, SDF_ligand, distance_cutoff=6.0):
+# This function returns the protein-ligand atom-type pairs for a given distance cutoff
+    
+    # Load both structures as pandas DataFrames
+    Target = LoadPDBasDF(PDB_protein)
+    Ligand = LoadSDFasDF(SDF_ligand)
+    
+    # Take all atoms from the target within a cubic box around the ligand considering the "distance_cutoff criterion"
+    for i in ["X","Y","Z"]:
+        Target = Target[Target[i] < float(Ligand[i].max())+distance_cutoff]
+        Target = Target[Target[i] > float(Ligand[i].min())-distance_cutoff]
+    
+    # Get all possible pairs
+    Pairs = list(product(Target["ECIF_ATOM_TYPE"], Ligand["ECIF_ATOM_TYPE"]))
+    Pairs = [x[0]+"-"+x[1] for x in Pairs]
+    Pairs = pd.DataFrame(Pairs, columns=["ECIF_PAIR"])
+    Distances = cdist(Target[["X","Y","Z"]], Ligand[["X","Y","Z"]], metric="euclidean")
+    Distances = Distances.reshape(Distances.shape[0]*Distances.shape[1],1)
+    Distances = pd.DataFrame(Distances, columns=["DISTANCE"])
+
+    Pairs = pd.concat([Pairs,Distances], axis=1)
+    Pairs = Pairs[Pairs["DISTANCE"] <= distance_cutoff].reset_index(drop=True)
+    # Pairs from ELEMENTS could be easily obtained froms pairs from ECIF
+    Pairs["ELEMENTS_PAIR"] = [x.split("-")[0].split(";")[0]+"-"+x.split("-")[1].split(";")[0] for x in Pairs["ECIF_PAIR"]]
+    return Pairs
+
+def GetECIF(PDB_protein, SDF_ligand, distance_cutoff=6.0):
+# Main function for the calculation of ECIF
+    Pairs = GetPLPairs(PDB_protein, SDF_ligand, distance_cutoff=distance_cutoff)
+    ECIF = [list(Pairs["ECIF_PAIR"]).count(x) for x in PossibleECIF]
+    return ECIF
+
+def ecif_to_ML(folder, protein, types_mols = ["Actives", "Inactives"]):
+    """
+    Get dataframe with ecif fingeprint for machine learnign
+
+    Parameters
+    ----------
+    path: str
+        path or directory of docking results
+    protein: pdb file
+        PDB protein file used in molecular docking
+    types_mols:
+        Names of folders where are actives and inactives molecules
+
+    Return:
+    ecif: pandas dataframe
+        Dataframe with ECIF intereactions classified by active and inactive
+    """
+    ecif_lst = []
+    for types in types_mols:
+        ecif_l = []
+        for name in tqdm(glob.glob(f"{folder}/{types}/*_sln.sdf"), desc=f"ECIF for {types} molecules"):
+            ecif = GetECIF(protein , name)
+            ecif_l.append(ecif)    
+
+        ### Join all molecules in one list and add the index by activity
+        cols = [f"Vector_{n+1}" for n in range(1584)]
+        act = pd.DataFrame(ecif_l, columns= cols) 
+        act["activity"] = types[:-1]
+        act.index = [types[:3] + "_" + str(num+1) for num in range(len(act))]
+        ecif_lst.append(act)
+
+    ecif = pd.concat(ecif_lst)
+    
+    return ecif
 
 ### Name for create a new folder / Its the name of the last folder 
 os.chdir(argv[1])
@@ -498,3 +669,7 @@ with mda.Writer(f"{path}/{targetName}.pdb") as pdb:
 ### PROLIF from results
 prolif = prolif_for_ML(argv[1], f"{path}/{targetName}.pdb")
 prolif.to_csv(f"{path}/{targetName}_PROLIF.csv", sep= ",")
+
+### ECIF from results
+ecif = ecif_to_ML(argv[1], f"{path}/{targetName}.pdb")
+ecif.to_csv(f"{path}/{targetName}_ECIF.csv", sep= ",")
