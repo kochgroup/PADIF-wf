@@ -214,7 +214,7 @@ def padif_gen(active_df, inactive_df):
             Act_type.append("Active")
         else:
             Act_type.append("Inactive")
-    padif["Activity"] = Act_type
+    padif["activity"] = Act_type
 
     return padif
 
