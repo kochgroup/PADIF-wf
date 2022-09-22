@@ -1,5 +1,11 @@
 ### nohup results
 *.out
 
+### log file from pycaret
+*.log
+
 ### Results
 /results
+
+### Catboost folder
+/catboost_info
