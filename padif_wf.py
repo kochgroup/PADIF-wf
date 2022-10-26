@@ -189,6 +189,7 @@ if __name__ == "__main__":
         settings.flip_amide_bonds = True
         settings.flip_pyramidal_nitrogen = True
         settings.flip_free_corners = True
+        settings.diverse_solutions = (True, 10, 5)
 
         ### save the configuration file to modify
         Docker.Settings.write(settings,f"{gold_name}.conf")
@@ -223,7 +224,7 @@ if __name__ == "__main__":
 
     ### Docking function
 
-    def dock_mol(confFile, id, dir, num_sln = 100):
+    def dock_mol(confFile, id, dir, num_sln = 10):
         """
         Docking function 
 
@@ -254,7 +255,7 @@ if __name__ == "__main__":
 
     ### Extract chemplp from files function
 
-    def chemplp_ext(file):
+    def chemplp_ext(file, dock_sol):
         """
         Function for open docking solution file and extract protein score contributions
 
@@ -262,6 +263,8 @@ if __name__ == "__main__":
         ----------
         file: mol2 or sdf file
             File of the docking solutions
+        dock_sol: int
+            Number of the docking solution
 
         Return
         lista: list
@@ -272,12 +275,14 @@ if __name__ == "__main__":
         with open(file) as inFile:  
             for num, line in enumerate(inFile):
                 if "> <Gold.PLP.Protein.Score.Contributions>\n" in line:
-                    limits.append(num)
+                    l1 = num
                 if "$$$$\n" in line:
-                    limits.append(num)
+                    l2 = num
+                    limit = [l1, l2]
+                    limits.append(limit)
         with open(file) as inFile:     
             for num, line in enumerate(inFile):            
-                if num > limits[0] and num < limits[1]-1:
+                if num > limits[dock_sol-1][0] and num < limits[dock_sol-1][1]-1:
                     lista.append(line)
         return lista
 
@@ -307,7 +312,7 @@ if __name__ == "__main__":
 
     ### Organize chemplp values in Dataframes
 
-    def chemplp_dataframe(soln_files_names, etiquete, dir):
+    def chemplp_dataframe(soln_files_names,dock_sol, etiquete, dir):
         """
         Extract chemplp for multiple docking solutions files
 
@@ -319,6 +324,8 @@ if __name__ == "__main__":
             String to indetify the class of molecules
         dir: str or path
             Directory of files
+        dock_sol: int
+            Number of the docking solution
         
         Return
         ------
@@ -328,7 +335,7 @@ if __name__ == "__main__":
         chempl_list = []
         ids =  []
         for name in glob.glob(soln_files_names):
-            chempl_list.append(chemplp_ext(name))
+            chempl_list.append(chemplp_ext(name, dock_sol))
             val = name.strip(f"/{dir}/")
             ids.append(val.split("_")[0])
 
@@ -536,52 +543,15 @@ if __name__ == "__main__":
     ### Extract chemplp from best docking solutions as actives
     act_df = chemplp_dataframe(f"{act_dir}/*_sln.sdf", "Act", act_dir)
 
-    ### Calculate the scaffolds in parallel
-    if __name__=='__main__':
-        from multiprocessing import Pool
-        with Pool() as pool:
-            scfs = pool.map(gen_scaffold, ligands["canonical_smiles"].tolist())
-
-    ### add to ligands dataframe the column with the scaffolds and delete the errors in this calculation
-    ligands["scf"] = scfs
-    ligands = ligands[ligands["scf"] != "Error-Smiles"]
-    ligands = ligands[ligands["scf"] != "Something else"]
-
-    ### Create a list with ids between ligands_1 and Zinc and delete the rows in dataframe
-    bad_id_dcm = pd.merge(dcm, ligands, on="scf")["id_x"].unique().tolist()
-    dcm_filtered = dcm[~dcm.id.isin(bad_id_dcm)]
-
-    ### Select 4 times te total of active molecules from filtered Zinc
-    list_index = random.sample(range(len(dcm_filtered)), len(ligands)*4)
-    inactives = dcm.iloc[list_index]
-
-    ### Create inactive directory
-    ina_dir = tempfile.mkdtemp(suffix=None,prefix='ina_',dir=myTemp)
-
-    ### Do the preparation in parallel
-    if __name__ == "__main__":
-        from multiprocessing import Pool
-        pool = Pool(processes=njobs)
-        for row in inactives.iloc:
-            pool.apply_async(prep_ligand_from_smiles, (row["smiles"], row["id"], ina_dir))
-        pool.close()
-        pool.join()
-
-    ### paralelize the docking for use all procesors 
-    if __name__ == "__main__":
-        from multiprocessing import Pool
-        pool = Pool(processes=njobs)
-        for row in inactives.iloc:
-            pool.apply_async(dock_mol, ("gold.conf", row["id"], ina_dir))
-        pool.close()
-        pool.join()
-
     ### Extract chemplp from best docking solutions as actives
-    ina_df = chemplp_dataframe(f"{ina_dir}/*_sln.sdf", "Ina", ina_dir)
+    df1 = []
+    for num in random.sample(range(2,11), 4):
+        df1.append(chemplp_dataframe(f"{act_dir}/*_sln.sdf",num, f"Ina_sln{num-1}", act_dir))
+    ina_df = pd.concat(df1)
 
     ### Do the PADIF_1
-    padif_3 = padif_gen(act_df, ina_df)
-    padif_3.to_csv(f"{path}/{prot_name}_PADIF.csv", sep =",")
+    padif = padif_gen(act_df, ina_df)
+    padif.to_csv(f"{path}/{prot_name}_PADIF.csv", sep =",")
 
     ### Create active and inactive directories and save docking files
     act_f = os.path.join(path, "Actives")
@@ -590,13 +560,6 @@ if __name__ == "__main__":
     for filename in glob.glob(act_dir + f"/*_sln.sdf"):
         shutil.copy(filename, act_f)
     
-    ### Create active directory
-    ina_f = os.path.join(path, "Inactives")
-    os.makedirs(ina_f, exist_ok=True)
-
-    for filename in glob.glob(ina_dir + f"/*_sln.sdf"):
-        shutil.copy(filename, ina_f)
-
     ### Copy plp_protein to principal folder
     shutil.copy(f"{act_dir}/plp_protein.mol2", path)
 
