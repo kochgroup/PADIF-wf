@@ -189,7 +189,7 @@ if __name__ == "__main__":
         settings.flip_amide_bonds = True
         settings.flip_pyramidal_nitrogen = True
         settings.flip_free_corners = True
-        settings.diverse_solutions = (True, 10, 5)
+        settings.diverse_solutions = (True, 10, 3)
 
         ### save the configuration file to modify
         Docker.Settings.write(settings,f"{gold_name}.conf")
@@ -541,7 +541,7 @@ if __name__ == "__main__":
         pool.join()
 
     ### Extract chemplp from best docking solutions as actives
-    act_df = chemplp_dataframe(f"{act_dir}/*_sln.sdf", "Act", act_dir)
+    act_df = chemplp_dataframe(f"{act_dir}/*_sln.sdf", 1 ,"Act", act_dir)
 
     ### Extract chemplp from best docking solutions as actives
     df1 = []

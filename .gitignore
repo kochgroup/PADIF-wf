@@ -1,8 +1,9 @@
 ### nohup results
 *.out
 
-### log file from pycaret
+### log file from pycaret and ccdc
 *.log
+*.warn
 
 ### Results
 /results
