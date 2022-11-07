@@ -6,7 +6,8 @@
 *.warn
 
 ### Results
-/results
+/results_div
+/results_znc
 
 ### Catboost folder
 /catboost_info
