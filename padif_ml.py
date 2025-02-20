@@ -26,126 +26,147 @@ Starting calculations
 """
 ### Initial parameters
 njobs = int(20)
+# njobs = os.cpu_count()
 warnings.filterwarnings("ignore")
-parenr_dir = os.getcwd()
 
 ### time
 start_cpu = time.process_time()
 start_clock = time.time()
 
-### Download the molecules and create datframes from ChEMBL
-dfActivities, targetName = chembl_mols('CHEMBL4760')
+def chembl_download(chembl_code):
 
-### Delete bad strings in target name
-unaceptable_strings = ["/", "(", ")", ",", ";", ".", " "]
-for string in unaceptable_strings:
-    targetName = targetName.replace(string, "_")
+    ### Download the molecules and create datframes from ChEMBL
+    dfActivities, targetName = chembl_mols('CHEMBL4760')
 
-dfActivities = pd.read_csv(f'/nfs/home/dvictori/felipe_storage/Felipe/multitarget-screening/bioassay-db/files/{targetName}.csv')
-ligands = dfActivities[["id", "new_smiles"]]
+    ### Delete bad strings in target name
+    unaceptable_strings = ["/", "(", ")", ",", ";", ".", " "]
+    for string in unaceptable_strings:
+        targetName = targetName.replace(string, "_")
+
+    ligands = dfActivities[["id", "new_smiles"]]
+
+    return ligands, targetName
+
+def protein_process(protein, ligand_id, path_target, target_name):    
+
+    ### Open and prepare protein 
+    prot1 = protein
+
+    ### preprare protein and ligand
+    protein_prepare(
+        protein=prot1,
+        path=path_target,
+        target_name=target_name,
+        save_ligand=True,
+        ligand_id=ligand_id,
+        multiple_chain=False,
+        chain_to_work='A',
+        remove_metals=False
+    )
+
+def active_docking(ligands, path_target, target_name):
+
+    ### Create temporary folder to work
+    sysTemp = tempfile.gettempdir()
+    myTemp = os.path.join(sysTemp,'mytemp')
+    #You must make sure myTemp exists
+    if not os.path.exists(myTemp):
+        os.makedirs(myTemp)
+
+    ### Make a temp folder and prepare ligands
+    act_dir = tempfile.mkdtemp(suffix=None,prefix='act_',dir=myTemp)
+    ligands['act_dir'] = [act_dir]*len(ligands)
+    tasks = ligands.apply(lambda row: (row['new_smiles'], row['id'], row['act_dir']), axis=1)
+    results = Parallel(n_jobs=-1)(delayed(prep_ligand_from_smiles)(*task) for task in tasks)
+
+    ### create the gold config for docking
+    gold_config(protein=f"{path_target}/{target_name}_prep.mol2", 
+                ref_ligand=f"{path_target}/Ligand_{target_name}.mol2",
+                gold_name=f'{target_name}_gold',
+                path=path_target)
+
+    ### Dock the Active compounds
+    to_dock = ligands[['id', 'act_dir']]
+    to_dock['gold_file'], to_dock['num_sln'] = [f'{path_target}/{target_name}_gold.conf']*len(to_dock), [10]*len(to_dock)
+    tasks_dock = to_dock.apply(lambda row: (row['gold_file'], row['id'], row['act_dir'], row['num_sln']), axis=1)
+    results_dock = Parallel(n_jobs=-1)(delayed(dock_mol)(*task) for task in tasks_dock)
+
+    ### Create active and inactive directories and save docking files
+    act_f = os.path.join(path_target, "Actives")
+    os.makedirs(act_f, exist_ok=True)
+
+    for filename in glob.glob(act_dir + f"/*_sln.sdf"):
+        shutil.copy(filename, act_f)
+
+    ### Copy plp_protein to principal folder
+    shutil.copy(f"{act_dir}/plp_protein.mol2", path_target)    
+
+def decoys_docking(ligands):
+
+    ### Calculate scaffolds for active compounds
+    scaffolds = Parallel(n_jobs=-1)(delayed(gen_scaffold)(smi) for smi in ligands.new_smiles.values)
+    ligands['scf'] = scaffolds
+    ligands = ligands[(ligands['scf'] != 'Error-Smiles') & (ligands['scf'] != 'Something else')]    
+
+    ### Select different compounds as decoys using scaffolds
+    decoys_df = pd.read_csv('./files/DCM_prepared.csv', sep=',')  
+    bad_id_dec = pd.merge(decoys_df, ligands, on="scf")["id_x"].unique().tolist()
+    decoys_df_f = decoys_df[~decoys_df.id.isin(bad_id_dec)]
+    decoys = decoys_df.iloc[random.sample(range(len(decoys_df_f)), len(ligands)*4)] 
+
+    ### make a temp folder and prepare decoys
+    dec_dir = tempfile.mkdtemp(suffix=None,prefix='ina_',dir=myTemp)
+    decoys['ina_dir'] = [dec_dir]*len(decoys)
+    tasks_decoys = decoys.apply(lambda row: (row['smiles'], row['id'], row['ina_dir']), axis=1)
+    results = Parallel(n_jobs=-1)(delayed(prep_ligand_from_smiles)(*task) for task in tasks_decoys) 
+
+    ### Dock the Active compounds
+    to_dock_decoys = decoys[['id', 'ina_dir']]
+    to_dock_decoys['gold_file'], to_dock_decoys['num_sln'] = [f'{path_target}/{targetName}_gold.conf']*len(to_dock_decoys), [10]*len(to_dock_decoys)
+    tasks_dock_decoys = to_dock_decoys.apply(lambda row: (row['gold_file'], row['id'], row['ina_dir'], row['num_sln']), axis=1)
+    results_dock_decoys = Parallel(n_jobs=-1)(delayed(dock_mol)(*task) for task in tasks_dock_decoys)   
+
+    ### Create decoys directory, save docking files and copy protein
+    dec_f = os.path.join(path_target, "Decoys")
+    os.makedirs(dec_f, exist_ok=True)   
+
+    for filename in glob.glob(dec_dir + f"/*_sln.sdf"):
+        shutil.copy(filename, dec_f)    
+
+    shutil.copy(f"{dec_dir}/plp_protein.mol2", path_target)
+    ### Remove Bad files
+    gc.collect()
+    shutil.rmtree(myTemp)
+
+
+def main(chembl_code, protein_file, ligand_id):
+
+    ligands, target_name = chembl_donwload(chembl_code)
     
-print(
-    f'''    
-    ********************************************************************************
+    print(
+        f'''    
+        ********************************************************************************
+        
+        Starting to work with {target_name} docking process
+        
+        ********************************************************************************
+        '''
+    )
+
+    ### Protein preparation
+    parenr_dir = os.getcwd()
+    path_target = os.path.join(parenr_dir, target_name)
+    os.makedirs(path_target, exist_ok=True)
+
+    protein_f = f'./file/{protein_file}'
+
+    protein_process(protein_f, ligand_id, path_target, target_name)
+
+    actives_docking(ligands, path_target, target_name)
     
-    Starting to work with {targetName} docking process
-    
-    ********************************************************************************
-    '''
-)
 
-### Protein preparation
-path_target = os.path.join(parenr_dir, targetName)
-os.makedirs(path_target, exist_ok=True)
 
-### Open and prepare protein 
-prot1 = '2VP0.pdb'
 
-### preprare protein and ligand
-protein_prepare(
-    protein=prot1,
-    path=path_target,
-    target_name=targetName,
-    save_ligand=True,
-    ligand_id='TTP',
-    multiple_chain=False,
-    chain_to_work='A',
-    remove_metals=False
-)
-
-### Create temporary folder to work
-sysTemp = tempfile.gettempdir()
-myTemp = os.path.join(sysTemp,'mytemp')
-#You must make sure myTemp exists
-if not os.path.exists(myTemp):
-    os.makedirs(myTemp)
-
-### Actives Docking
-
-### Make a temp folder and prepare ligands
-act_dir = tempfile.mkdtemp(suffix=None,prefix='act_',dir=myTemp)
-ligands['act_dir'] = [act_dir]*len(ligands)
-tasks = ligands.apply(lambda row: (row['new_smiles'], row['id'], row['act_dir']), axis=1)
-results = Parallel(n_jobs=-1)(delayed(prep_ligand_from_smiles)(*task) for task in tasks)
-
-### create the gold config for docking
-gold_config(protein=f"{path_target}/{targetName}_prep.mol2", 
-            ref_ligand=f"{path_target}/Ligand_{targetName}.mol2",
-            gold_name=f'{targetName}_gold',
-            path=path_target)
-
-### Dock the Active compounds
-to_dock = ligands[['id', 'act_dir']]
-to_dock['gold_file'], to_dock['num_sln'] = [f'{path_target}/{targetName}_gold.conf']*len(to_dock), [10]*len(to_dock)
-tasks_dock = to_dock.apply(lambda row: (row['gold_file'], row['id'], row['act_dir'], row['num_sln']), axis=1)
-results_dock = Parallel(n_jobs=-1)(delayed(dock_mol)(*task) for task in tasks_dock)
-
-### Create active and inactive directories and save docking files
-act_f = os.path.join(path_target, "Actives")
-os.makedirs(act_f, exist_ok=True)
-
-for filename in glob.glob(act_dir + f"/*_sln.sdf"):
-    shutil.copy(filename, act_f)
-
-### Copy plp_protein to principal folder
-shutil.copy(f"{act_dir}/plp_protein.mol2", path_target)
-
-### Decoys Docking
-
-### Calculate scaffolds for active compounds
-scaffolds = Parallel(n_jobs=-1)(delayed(gen_scaffold)(smi) for smi in ligands.new_smiles.values)
-ligands['scf'] = scaffolds
-ligands = ligands[(ligands['scf'] != 'Error-Smiles') & (ligands['scf'] != 'Something else')]
-
-### Select different compounds as decoys using scaffolds
-decoys_df = pd.read_csv('DCM_prepared.csv', sep=',')  
-bad_id_dec = pd.merge(decoys_df, ligands, on="scf")["id_x"].unique().tolist()
-decoys_df_f = decoys_df[~decoys_df.id.isin(bad_id_dec)]
-decoys = decoys_df.iloc[random.sample(range(len(decoys_df_f)), len(ligands)*4)]
-
-### make a temp folder and prepare decoys
-dec_dir = tempfile.mkdtemp(suffix=None,prefix='ina_',dir=myTemp)
-decoys['ina_dir'] = [dec_dir]*len(decoys)
-tasks_decoys = decoys.apply(lambda row: (row['smiles'], row['id'], row['ina_dir']), axis=1)
-results = Parallel(n_jobs=-1)(delayed(prep_ligand_from_smiles)(*task) for task in tasks_decoys)
-
-### Dock the Active compounds
-to_dock_decoys = decoys[['id', 'ina_dir']]
-to_dock_decoys['gold_file'], to_dock_decoys['num_sln'] = [f'{path_target}/{targetName}_gold.conf']*len(to_dock_decoys), [10]*len(to_dock_decoys)
-tasks_dock_decoys = to_dock_decoys.apply(lambda row: (row['gold_file'], row['id'], row['ina_dir'], row['num_sln']), axis=1)
-results_dock_decoys = Parallel(n_jobs=-1)(delayed(dock_mol)(*task) for task in tasks_dock_decoys)
-
-### Create decoys directory, save docking files and copy protein
-dec_f = os.path.join(path_target, "Decoys")
-os.makedirs(dec_f, exist_ok=True)
-
-for filename in glob.glob(dec_dir + f"/*_sln.sdf"):
-    shutil.copy(filename, dec_f)
-
-shutil.copy(f"{dec_dir}/plp_protein.mol2", path_target)
-### Remove Bad files
-gc.collect()
-shutil.rmtree(myTemp)
 
 print(
     f'''    
