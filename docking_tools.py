@@ -6,7 +6,6 @@ IMPORTANT: this only runs with CCDC enviroment, please install the before run
 """
 import pandas as pd
 from math import log
-from timeout_decorator import timeout
 from ccdc import conformer
 from ccdc.docking import Docker
 from ccdc.io import MoleculeReader, MoleculeWriter
@@ -183,7 +182,7 @@ def gold_config(protein, path, ref_ligand=None, type_of_binding_site= "ligand", 
     for line in lines:
         new_lines.append(line)
 
-        if line.strip() == 'save_protein_torsions = 1'
+        if line.strip() == 'save_protein_torsions = 1':
             new_lines.extend([
                 'concatenated_output = ligand.sdf\n',
                 "output_file_format = MACCS\n",

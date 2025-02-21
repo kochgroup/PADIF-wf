@@ -187,12 +187,10 @@ def main(chembl_code, protein_file, ligand_id):
 
     ### Protein preparation
     parenr_dir = os.getcwd()
-    path_target = os.path.join(parenr_dir, target_name)
+    path_target = os.path.join(f"{parenr_dir}/files", target_name)
     os.makedirs(path_target, exist_ok=True)
 
-    protein_f = f'./file/{protein_file}'
-
-    protein_process(protein_f, ligand_id, path_target, target_name)
+    protein_process(protein_file, ligand_id, path_target, target_name)
 
     temp, active_folder = actives_docking(ligands, path_target, target_name)
     
