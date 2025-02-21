@@ -86,7 +86,6 @@ def chembl_mols(chembl_id):
 
         return dfActivities, targetName 
 
-@timeout(300)
 def prep_ligand_from_smiles(smiles, id, dir):
     
     """
@@ -106,19 +105,22 @@ def prep_ligand_from_smiles(smiles, id, dir):
     prep_lig: mol2 file
         Molecular file for the prepared structure
     """
-    ### molecule from smiles
-    lig_molecule = Molecule.from_string(smiles, format="smiles")
-    ### Pass ligands to molecule format for GOLD, generating 3D coordinates
-    con_gen = conformer.ConformerGenerator()
-    con_gen.settings.max_conformers = 1
-    lig_mol_3d = con_gen.generate(lig_molecule)
-    ligand_prep = Docker.LigandPreparation()
-    ligand_prep.settings.protonate = True
-    ligand_prep.settings.standardise_bond_types = True
-    prep_lig = ligand_prep.prepare(Entry.from_molecule(lig_mol_3d[0].molecule))
-    ### Write molecule 
-    with MoleculeWriter(f"{dir}/{id}.mol2") as mol_writer:
-            mol_writer.write(prep_lig.molecule)
+    try:
+        ### molecule from smiles
+        lig_molecule = Molecule.from_string(smiles, format="smiles")
+        ### Pass ligands to molecule format for GOLD, generating 3D coordinates
+        con_gen = conformer.ConformerGenerator()
+        con_gen.settings.max_conformers = 1
+        lig_mol_3d = con_gen.generate(lig_molecule)
+        ligand_prep = Docker.LigandPreparation()
+        ligand_prep.settings.protonate = True
+        ligand_prep.settings.standardise_bond_types = True
+        prep_lig = ligand_prep.prepare(Entry.from_molecule(lig_mol_3d[0].molecule))
+        ### Write molecule 
+        with MoleculeWriter(f"{dir}/{id}.mol2") as mol_writer:
+                mol_writer.write(prep_lig.molecule)
+    except:
+        pass
 
 def gold_config(protein, path, ref_ligand=None, type_of_binding_site= "ligand", residues_numbers=None,
                 gold_name = "gold", size = 8):
@@ -168,7 +170,7 @@ def gold_config(protein, path, ref_ligand=None, type_of_binding_site= "ligand", 
     settings.flip_pyramidal_nitrogen = True
     settings.flip_free_corners = True
     settings.save_binding_site_atoms = True 
-    settings.torsion_distribution_file = "/appl/ccdc/CSDS2020/Discovery_2020/GOLD/gold/gold.tordist"
+    settings.torsion_distribution_file = "/appl/ccdc/CSDS2020/Discovery_2020/GOLD/gold/tor_lib_2020.tordist"
 
     ### save the configuration file to modify
     Docker.Settings.write(settings,f"{path}/{gold_name}.conf")
@@ -177,28 +179,20 @@ def gold_config(protein, path, ref_ligand=None, type_of_binding_site= "ligand", 
     with open(f"{path}/{gold_name}.conf", "r") as inFile:
         text = inFile.readlines()
 
-    with open(f"{path}/{gold_name}.conf", "w") as outFile:
-        for line in text:
-            if line == "save_protein_torsions = 1\n":
-                line = line + "concatenated_output = ligand.sdf\n"
-            outFile.write(line)
+    new_lines = []
+    for line in lines:
+        new_lines.append(line)
 
-    with open(f"{path}/{gold_name}.conf", "r") as inFile:
-        text = inFile.readlines()
-
-    with open(f"{path}/{gold_name}.conf", "w") as outFile:
-        for line in text:
-            if line == "concatenated_output = ligand.sdf\n":
-                line = line + "clean_up_option delete_all_solutions\n"
-                line = line + "clean_up_option save_top_n_solutions 5\n"
-                line = line + "clean_up_option delete_redundant_log_files\n"
-                line = line + "clean_up_option delete_all_initialised_ligands\n"
-                line = line + "clean_up_option delete_empty_directories\n"
-                line = line + "clean_up_option delete_rank_file\n"
-                line = line + "clean_up_option delete_all_log_files\n"
-                line = line + "output_file_format = MACCS\n"
-                line = line + "per_atom_scores = 1\n"
-            outFile.write(line)
+        if line.strip() == 'save_protein_torsions = 1'
+            new_lines.extend([
+                'concatenated_output = ligand.sdf\n',
+                "output_file_format = MACCS\n",
+                "per_atom_scores = 1\n"
+            ])
+    
+    # Write the updated content back to the file
+    with open(f"{path}/{gold_name}.conf", "w") as file:
+        file.writelines(new_lines)
 
 ### Docking function
 

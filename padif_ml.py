@@ -218,7 +218,8 @@ def main(chembl_code, protein_file, ligand_id):
     gc.collect()
     shutil.rmtree(temp)
 
-
+if __name__ == '__main__':
+    main(argv[1], argv[2], argv[3])
 
 
 
