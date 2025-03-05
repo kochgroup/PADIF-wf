@@ -13,6 +13,7 @@ from ccdc.entry import Entry
 from ccdc.molecule import Molecule
 from ccdc.protein import Protein
 from rdkit import Chem
+import datamol as dm
 from joblib import Parallel, delayed
 from rdkit.Chem import Descriptors
 from rdkit.Chem.Scaffolds.MurckoScaffold import MakeScaffoldGeneric
@@ -75,7 +76,7 @@ def chembl_mols(chembl_id):
                     mol_weight.append(Descriptors.MolWt(j))
             except:
                 mol_weight.append(0)
-        dfActivities["mol_weight"] = mol_weight
+        
         dfActivities = dfActivities.loc[(dfActivities["mol_weight"] >= 180.0) &
                                         (dfActivities["mol_weight"] <= 600.0), 
                                         ["canonical_smiles", "molecule_chembl_id", "pchembl_value", 
@@ -169,14 +170,14 @@ def gold_config(protein, path, ref_ligand=None, type_of_binding_site= "ligand", 
     settings.flip_pyramidal_nitrogen = True
     settings.flip_free_corners = True
     settings.save_binding_site_atoms = True 
-    settings.torsion_distribution_file = "/appl/ccdc/CSDS2020/Discovery_2020/GOLD/gold/tor_lib_2020.tordist"
+    settings.torsion_distribution_file = "/appl/CCDC_2020/CSDS2020/Discovery_2020/GOLD/gold/gold.tordist"
 
     ### save the configuration file to modify
     Docker.Settings.write(settings,f"{path}/{gold_name}.conf")
 
     ### Add to config file "per_atom_scores"
     with open(f"{path}/{gold_name}.conf", "r") as inFile:
-        text = inFile.readlines()
+        lines = inFile.readlines()
 
     new_lines = []
     for line in lines:

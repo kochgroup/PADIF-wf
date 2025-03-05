@@ -165,36 +165,4 @@ def residue_interactions(padif, path_figure, act_ids, dec_ids):
 
       return padif_interactions      
 
-path_work = '/nfs/home/dvictori/felipe_storage/Felipe/padif_auto/Deoxynucleoside_kinase'
-protein_df = atom_interaction_info(path_work)
 
-padif = pd.read_csv('/nfs/home/dvictori/felipe_storage/Felipe/padif_auto/Deoxynucleoside_kinase/Deoxynucleoside_kinase_PADIF.csv')
-act, dec ,all = atoms_by_activity(padif, protein_df)
-identifiers = [[f':{row["residueNum"]}@{row["atom"]}' for row in df.iloc] for df in [all, act, dec]]
-
-atoms_path = os.path.join(path_work, 'atoms_data')
-os.makedirs(atoms_path, exist_ok=True)
-
-res_info = residue_interactions(padif,atoms_path, act.AtomID.tolist(), dec.AtomID.tolist())
-
-# Path to the command file you want to create
-command_file_path = f"{atoms_path}/setup_chimera.cmd"
-
-# Create the Chimera command file
-write_chimera_commands(
-     f'{path_work}/Deoxynucleoside_kinase_prep.mol2',
-     identifiers[0],
-     identifiers[1],
-     identifiers[2],
-     f'{atoms_path}',
-     command_file_path
-)
-### Start process
-import subprocess
-
-ch_path = '/appl/UCSF/Chimera64-1.17.3/bin/chimera'
-
-subprocess.run([ch_path, command_file_path])
-
-
-# %%

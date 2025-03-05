@@ -36,16 +36,14 @@ start_clock = time.time()
 def chembl_download(chembl_code):
 
     ### Download the molecules and create datframes from ChEMBL
-    dfActivities, targetName = chembl_mols('CHEMBL4760')
+    dfActivities, targetName = chembl_mols(chembl_code)
 
     ### Delete bad strings in target name
     unaceptable_strings = ["/", "(", ")", ",", ";", ".", " "]
     for string in unaceptable_strings:
         targetName = targetName.replace(string, "_")
 
-    ligands = dfActivities[["id", "new_smiles"]]
-
-    return ligands, targetName
+    return dfActivities, targetName
 
 def protein_process(protein, ligand_id, path_target, target_name):    
 
@@ -76,7 +74,7 @@ def active_docking(ligands, path_target, target_name):
     ### Make a temp folder and prepare ligands
     act_dir = tempfile.mkdtemp(suffix=None,prefix='act_',dir=myTemp)
     ligands['act_dir'] = [act_dir]*len(ligands)
-    tasks = ligands.apply(lambda row: (row['new_smiles'], row['id'], row['act_dir']), axis=1)
+    tasks = ligands.apply(lambda row: (row['smiles'], row['id'], row['act_dir']), axis=1)
     results = Parallel(n_jobs=-1)(delayed(prep_ligand_from_smiles)(*task) for task in tasks)
 
     ### create the gold config for docking
@@ -103,10 +101,10 @@ def active_docking(ligands, path_target, target_name):
 
     return myTemp, act_f  
 
-def decoys_docking(ligands, temp, path_target, target_name):
+def decoy_docking(ligands, temp, path_target, target_name):
 
     ### Calculate scaffolds for active compounds
-    scaffolds = Parallel(n_jobs=-1)(delayed(gen_scaffold)(smi) for smi in ligands.new_smiles.values)
+    scaffolds = Parallel(n_jobs=-1)(delayed(gen_scaffold)(smi) for smi in ligands.smiles.values)
     ligands['scf'] = scaffolds
     ligands = ligands[(ligands['scf'] != 'Error-Smiles') & (ligands['scf'] != 'Something else')]    
 
@@ -137,15 +135,15 @@ def decoys_docking(ligands, temp, path_target, target_name):
 
     shutil.copy(f"{dec_dir}/plp_protein.mol2", path_target)
 
-    return dec_f
+    return decoys, dec_f
 
-def padif_extraction(ligands, active_folder, decoy_folder, path_target, target_name):
+def padif_extraction(ligands, decoys, active_folder, decoy_folder, path_target, target_name):
 
     ### Extract PADIF for actives compounds and add the SMILES for each molecule
     active_padif = padif_to_dataframe(active_folder, cavity_file=f'{path_target}/cavity.atoms', actives=True)
-    ligands_info = ligands[['id','new_smiles']]
+    ligands_info = ligands[['id','smiles']]
     active_padif = active_padif.merge(ligands_info, on='id')
-    active_padif = active_padif.rename(columns={'new_smiles':'smiles'})
+    active_padif = active_padif.rename(columns={'smiles':'smiles'})
     ### Extract PADIF for decoys compounds and add the SMILES for each molecule
     decoys_padif = padif_to_dataframe(decoy_folder, cavity_file=f'{path_target}/cavity.atoms')
     decoys_info = decoys[['id','smiles']]
@@ -173,7 +171,10 @@ def split_datasets(splitters, path_target, target_name):
 
 def main(chembl_code, protein_file, ligand_id):
 
-    ligands, target_name = chembl_donwload(chembl_code)
+    ### Download the ligands from chembl and change columns names
+    ligands, target_name = chembl_download(chembl_code)
+    ligands.to_csv(f'files/{target_name}_chembl_mols.csv', index=False)
+    ligands = ligands[['molecule_chembl_id', 'canonical_smiles']].rename(columns={'molecule_chembl_id':'id', 'canonical_smiles':'smiles'})
     
     print(
         f'''    
@@ -190,13 +191,13 @@ def main(chembl_code, protein_file, ligand_id):
     path_target = os.path.join(f"{parenr_dir}/files", target_name)
     os.makedirs(path_target, exist_ok=True)
 
-    protein_process(protein_file, ligand_id, path_target, target_name)
+    protein_process(f'files/{protein_file}', ligand_id, path_target, target_name)
 
-    temp, active_folder = actives_docking(ligands, path_target, target_name)
+    temp, active_folder = active_docking(ligands, path_target, target_name)
     
-    decoy_folder = decoys_docking(ligands, temp, path_target, target_name)
+    decoys, decoy_folder = decoy_docking(ligands, temp, path_target, target_name)
 
-    padif_extraction(ligands, active_folder, decoy_folder, path_taget, target_name)
+    padif_extraction(ligands, decoys, active_folder, decoy_folder, path_target, target_name)
 
     splitters = ['random', 'scaffold', 'fingerprint']
 
@@ -220,31 +221,3 @@ if __name__ == '__main__':
     main(argv[1], argv[2], argv[3])
 
 
-
-# #%%
-# ### Save all atoms info and display in chimera
-
-# ### Extract information about protein and atoms by activity
-# protein_df = atom_interaction_info(path_target)
-# act, dec, all = atoms_by_activity(final_padif, protein_df)
-# ### Create folder to save residue and atom information
-# atoms_path = os.path.join(path_target, 'atoms_data')
-# os.makedirs(atoms_path, exist_ok=True)
-# ### Save information about residue
-# res_info = residue_interactions(final_padif, atoms_path)
-# res_info.to_csv(f'{atoms_path}/residue_information.csv', sep=',', index=False)
-# ### Create command file and start chimera
-# # Path to the command file you want to create
-# command_file_path = f"{atoms_path}/setup_chimera.cmd"
-# # Create the Chimera command file
-# write_chimera_commands(
-#      f'{path_target}/{targetName}_prep.mol2',
-#      list(all),
-#      list(act),
-#      list(dec),
-#      f'{atoms_path}',
-#      command_file_path
-# )
-# ### Start process
-# ch_path = '/appl/UCSF/Chimera64-1.17.3/bin/chimera'
-# subprocess.run([ch_path, command_file_path])

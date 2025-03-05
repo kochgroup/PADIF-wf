@@ -53,10 +53,13 @@ def predictions_models(splitters_list, path):
         ina = test_1[test_1["prediction_label"] == 0].sort_values(["score"],ascending=False)
         pred_cs = pd.concat([act, ina])
         pred_cs['model'] = 'CHEMPLP_scoring'
-        ### Extract list for calculate enrichmene factors 
-        scores = [[x] for x in pred_cs.activity]
         bal_acc = [round(balanced_accuracy_score(pred_cs.activity, pred_cs.prediction_label),4)]
-        er = [[round(val, 4) for val in CalcEnrichment(scores, 0, [0.01, 0.25])]]
+        ### Extract list for calculate enrichment factors 
+        perfect_scores = [[1]]*len(pred_cs[pred_cs.activity == 1]) + [[0]]*len(pred_cs[pred_cs.activity == 0])
+        perfect_ef = CalcEnrichment(perfect_scores, 0, [0.01, 0.25])
+        scores = [[x] for x in pred_cs.activity]
+        ef = CalcEnrichment(scores, 0, [0.01, 0.25])
+        ef_std = [[round(x/y, 4) for x, y in zip(ef, perfect_ef)]]
         md = ['CHEMPLP_scoring']
 
 
@@ -71,19 +74,22 @@ def predictions_models(splitters_list, path):
             pred = pd.concat([act, ina])
             pred['model'] = file.split("/")[-1].split(".")[0]
             predictions.append(pred)
-            ### Extract list for calculate enrichmene factors 
-            scores = [[x] for x in pred.activity]
             bal_acc.append(round(balanced_accuracy_score(pred.activity, pred.prediction_label),4))
-            er.append([round(val, 4) for val in CalcEnrichment(scores, 0, [0.01, 0.25])])
+            ### Extract list for calculate enrichmene factors 
+            pefrfect_scores = [[1]]*len(pred[pred.activity == 1]) + [[0]]*len(pred[pred.activity == 0])
+            pefrfect_ef = CalcEnrichment(pefrfect_scores, 0, [0.01, 0.25])
+            scores = [[x] for x in pred.activity]
+            ef = CalcEnrichment(scores, 0, [0.01, 0.25])
+            ef_std.append([round(x/y, 4) for x, y in zip(ef, pefrfect_ef)])
             md.append(file.split("/")[-1].split(".")[0])
-        
+                
         ### create a dataframe for metrics
         metrics = pd.DataFrame(
             list(zip(bal_acc, md)), 
             columns=["BA", "model"]
         )
         ### Add enrichment factors for metrics and save
-        enrichment = pd.DataFrame(er, columns=["EF1%", "EF25%"]) 
+        enrichment = pd.DataFrame(ef_std, columns=["NEF1%", "NEF25%"]) 
         metrics = pd.concat([metrics, enrichment], axis=1)
         metrics["type"] = type   
         data_metrics.append(metrics)
