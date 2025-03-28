@@ -67,15 +67,10 @@ def chembl_mols(chembl_id):
         
         ### Select molecules only for molecular weight required
         
-        mol_weight = []
-        for i in dfActivities["canonical_smiles"]:
-            mol = []
-            try:
-                mol.append(Chem.MolFromSmiles(i))
-                for j in mol:
-                    mol_weight.append(Descriptors.MolWt(j))
-            except:
-                mol_weight.append(0)
+        dfActivities['mol_weight'] = [
+            dm.descriptors.mw(mol) if mol is not None else 0
+            for mol in [dm.to_mol(smi) for smi in dfActivities.canonical_smiles]
+        ]
         
         dfActivities = dfActivities.loc[(dfActivities["mol_weight"] >= 180.0) &
                                         (dfActivities["mol_weight"] <= 600.0), 

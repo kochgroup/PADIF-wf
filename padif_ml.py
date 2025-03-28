@@ -45,6 +45,20 @@ def chembl_download(chembl_code):
 
     return dfActivities, targetName
 
+def smiles_standardization(smiles):
+    try:
+        mol = dm.to_mol(smiles, ordered=True)
+        mol = dm.fix_mol(mol, largest_only=True)
+        mol = dm.sanitize_mol(mol, sanifix=True, charge_neutral=False)
+        mol = dm.standardize_mol(
+            mol, disconnect_metals=True, normalize=True, reionize=False, uncharge=False, stereo=False
+        )
+        smiles = dm.standardize_smiles(dm.to_smiles(mol, isomeric=False))
+    except:
+        smiles = 'Error in smiles'
+    
+    return smiles
+
 def protein_process(protein, ligand_id, path_target, target_name):    
 
     ### Open and prepare protein 
@@ -185,6 +199,13 @@ def main(chembl_code, protein_file, ligand_id):
         ********************************************************************************
         '''
     )
+    ### Standardize the smiles
+    ligands['smiles'] = Parallel(n_jobs=-1)(delayed(smiles_standardization)(smi) for smi in ligands.smiles)
+     print(f"""
+        Number of smiles that cannot be standardized in chembl ligands: {len(ligands[ligands['smiles'] == 'Error in smiles'])}
+    """
+    )
+    ligands = ligands[ligands['smiles'] != 'Error in smiles']
 
     ### Protein preparation
     parenr_dir = os.getcwd()
