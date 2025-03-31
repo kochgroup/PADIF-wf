@@ -124,7 +124,7 @@ def prep_ligand_from_smiles(smiles, id, dir):
         ligand_prep.settings.standardise_bond_types = True
         prep_lig = ligand_prep.prepare(Entry.from_molecule(ccdc_mol))
         ### Write molecule 
-        with MoleculeWriter(f"{dir}/{id}_p.mol2") as mol_writer:
+        with MoleculeWriter(f"{dir}/{id}.mol2") as mol_writer:
             mol_writer.write(prep_lig.molecule)
     except:
         print(f'''
