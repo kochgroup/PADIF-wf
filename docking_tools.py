@@ -6,16 +6,15 @@ IMPORTANT: this only runs with CCDC enviroment, please install the before run
 """
 import pandas as pd
 from math import log
-from ccdc import conformer
+import datamol as dm
 from ccdc.docking import Docker
 from ccdc.io import MoleculeReader, MoleculeWriter
 from ccdc.entry import Entry
 from ccdc.molecule import Molecule
 from ccdc.protein import Protein
 from rdkit import Chem
-import datamol as dm
+from rdkit.Chem import AllChem, Descriptors
 from joblib import Parallel, delayed
-from rdkit.Chem import Descriptors
 from rdkit.Chem.Scaffolds.MurckoScaffold import MakeScaffoldGeneric
 from chembl_webresource_client.new_client import new_client 
 
@@ -101,21 +100,36 @@ def prep_ligand_from_smiles(smiles, id, dir):
         Molecular file for the prepared structure
     """
     try:
-        ### molecule from smiles
-        lig_molecule = Molecule.from_string(smiles, format="smiles")
-        ### Pass ligands to molecule format for GOLD, generating 3D coordinates
-        con_gen = conformer.ConformerGenerator()
-        con_gen.settings.max_conformers = 1
-        lig_mol_3d = con_gen.generate(lig_molecule)
+        ### Read the molecules with rdkit 
+        mol = Chem.MolFromSmiles(smiles)
+        mol = Chem.AddHs(mol)
+        ### Calculate the Conformers and enegies for each one
+        conformer = AllChem.EmbedMultipleConfs(
+            mol, 
+            numConfs=100, 
+            pruneRmsThresh=1, 
+            numThreads=-1, 
+            useRandomCoords=True, 
+            randomSeed=1590
+        )
+        energies = AllChem.UFFOptimizeMoleculeConfs(mol, maxIters=200)
+        ### Sort the conformers and select the conformer with the best energy
+        sorted_conformers = sorted(range(len(conformer)), key=lambda i: energies[i][1])
+        ### Pass the conformer to SDF mol and read with CCDC
+        conf_mol = Chem.MolToMolBlock(mol, confId=sorted_conformers[0])
+        ccdc_mol = Molecule.from_string(conf_mol, format="sdf")
+        ### Prepare the compound for docking 
         ligand_prep = Docker.LigandPreparation()
         ligand_prep.settings.protonate = True
         ligand_prep.settings.standardise_bond_types = True
-        prep_lig = ligand_prep.prepare(Entry.from_molecule(lig_mol_3d[0].molecule))
+        prep_lig = ligand_prep.prepare(Entry.from_molecule(ccdc_mol))
         ### Write molecule 
-        with MoleculeWriter(f"{dir}/{id}.mol2") as mol_writer:
-                mol_writer.write(prep_lig.molecule)
+        with MoleculeWriter(f"{dir}/{id}_p.mol2") as mol_writer:
+            mol_writer.write(prep_lig.molecule)
     except:
-        pass
+        print(f'''
+            {id} cannot be processed {smiles}
+        ''')
 
 def gold_config(protein, path, ref_ligand=None, type_of_binding_site= "ligand", residues_numbers=None,
                 gold_name = "gold", size = 8):
