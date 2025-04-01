@@ -31,12 +31,21 @@ def models_pycaret(train_set, path):
     """
     ### Charge info to process
     train = pd.read_csv(train_set)
-    train = train.drop(["id", "score", "smiles"], axis=1)
-    ### mesure active balance in dataset
+    train = train.drop(["id", "score", "smiles"], axis=1)    
+    ### mesure active balance in datases
     if (train.activity.value_counts()[1] / len(train)) <= 0.35:
-        best_models = setup(data = train, target = "activity", session_id = 125, log_experiment = False,
-                        normalize = True, fold_shuffle=True,
-                        fix_imbalance=True, fix_imbalance_method= adasyn1)
+        X = train.drop('activity', axis=1)
+        y = train['activity']
+        
+        # Apply ADASYN
+        ada = ADASYN(sampling_strategy='minority')
+        X_resampled, y_resampled = ada.fit_resample(X, y)
+
+        # Create a new DataFrame for the balanced data
+        train_balanced = pd.concat([X_resampled, y_resampled], axis=1)
+
+        best_models = setup(data = train_balanced, target = "activity", session_id = 125, log_experiment = False,
+                        normalize = True, fold_shuffle=True)
     else:
         best_models = setup(data = train, target = "activity", session_id = 125, log_experiment = False,
                         normalize = True, fold_shuffle=True)
