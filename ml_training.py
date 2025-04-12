@@ -7,8 +7,6 @@ from tqdm import tqdm
 import os
 import pandas as pd
 
-adasyn1= ADASYN(sampling_strategy="minority")
-#%%
 ## Useful functions
 def models_pycaret(train_set, path):
     """
@@ -32,28 +30,18 @@ def models_pycaret(train_set, path):
     ### Charge info to process
     train = pd.read_csv(train_set)
     train = train.drop(["id", "score", "smiles"], axis=1)    
-    ### mesure active balance in datases
-    if (train.activity.value_counts()[1] / len(train)) <= 0.35:
-        X = train.drop('activity', axis=1)
-        y = train['activity']
-        
-        # Apply ADASYN
-        ada = ADASYN(sampling_strategy='minority')
-        X_resampled, y_resampled = ada.fit_resample(X, y)
-
-        # Create a new DataFrame for the balanced data
-        train_balanced = pd.concat([X_resampled, y_resampled], axis=1)
-
-        best_models = setup(data = train_balanced, target = "activity", session_id = 125, log_experiment = False,
-                        normalize = True, fold_shuffle=True)
-    else:
-        best_models = setup(data = train, target = "activity", session_id = 125, log_experiment = False,
-                        normalize = True, fold_shuffle=True)
-    ### Create the best models, tune and finalize them
+    ### mesure active balance in datasets
+    
+    best_models = setup(data = train, target = "activity", session_id = 125, log_experiment = False,
+                    normalize = True, fold_shuffle=True, use_gpu=False, fix_imbalance=True, fix_imbalance_method='ADASYN', 
+                    memory=False, n_jobs=-1 
+                    )
+    
     models = compare_models(
         sort = "f1", include=["rf", "xgboost", "svm", "mlp"],
         n_select=4
     )
+    
     info = pull()
     tuned_models = [tune_model(model, optimize= "f1") for model in models]
     fin_models = [finalize_model(model) for model in tuned_models]
@@ -83,4 +71,3 @@ def padif_train(target, splitter_types, path_to_work):
         )  
         models_pycaret(f'{folder}/Train.csv', folder2)
 
-# %%

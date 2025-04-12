@@ -104,13 +104,17 @@ def padif_to_dataframe(folder, cavity_file, actives=False):
     ### extract padif from actives
     params = zip(files, [cavity_file]*len(files))
     out = Parallel(n_jobs=-1)(delayed(padif_generator)(file, cavity) for file, cavity in params)
-    if actives == True:
+    if type == 'actives':
         ### organize and add acitivity column
         padif_df = organize_padif(out, 1)
+    
+    elif type == 'decoys':
+        ### organize and add acitivity column
+        padif_df = organize_padif(out, 0)
     
     else:
         ### organize and add acitivity column
         padif_df = organize_padif(out, 0)
+        padif_df = padif_df.drop(columns=['activity'])
     
     return padif_df
-

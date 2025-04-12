@@ -7,6 +7,7 @@ import random
 import shutil
 import warnings
 import tempfile
+import argparse
 import subprocess
 import numpy as np
 import pandas as pd
@@ -151,6 +152,35 @@ def decoy_docking(ligands, temp, path_target, target_name):
 
     return decoys, dec_f
 
+def test_docking(test_df, ligands, temp, path_target, target_name):
+
+    ### Select different compounds as decoys using scaffolds
+    bad_id_test = pd.merge(test_df, ligands, on="smiles")["id_x"].unique().tolist()
+    test = test_df[~test_df.id.isin(bad_id_test)]
+
+    ### make a temp folder and prepare test
+    test_dir = tempfile.mkdtemp(suffix=None,prefix='test_',dir=temp)
+    test['test_dir'] = [test_dir]*len(test)
+    tasks_test = test.apply(lambda row: (row['smiles'], row['id'], row['test_dir']), axis=1)
+    results = Parallel(n_jobs=-1)(delayed(prep_ligand_from_smiles)(*task) for task in tasks_test) 
+
+    ### Dock the Active compounds
+    to_dock_test = test[['id', 'test_dir']]
+    to_dock_test['gold_file'], to_dock_test['num_sln'] = [f'{path_target}/{target_name}_gold.conf']*len(to_dock_test), [10]*len(to_dock_test)
+    tasks_dock_test = to_dock_test.apply(lambda row: (row['gold_file'], row['id'], row['test_dir'], row['num_sln']), axis=1)
+    results_dock_test = Parallel(n_jobs=-1)(delayed(dock_mol)(*task) for task in tasks_dock_test)   
+
+    ### Create test directory, save docking files and copy protein
+    test_f = os.path.join(path_target, "test_mols")
+    os.makedirs(test_f, exist_ok=True)   
+
+    for filename in glob.glob(test_dir + f"/*_sln.sdf"):
+        shutil.copy(filename, test_f)    
+
+    shutil.copy(f"{test_dir}/plp_protein.mol2", path_target)
+
+    return test_f, bad_id_test
+
 def padif_extraction(ligands, decoys, active_folder, decoy_folder, path_target, target_name):
 
     ### Extract PADIF for actives compounds and add the SMILES for each molecule
@@ -183,11 +213,26 @@ def split_datasets(splitters, path_target, target_name):
         to_split(target=target_name, padif_folder=path_target, path_to_work=path, method=splitter)
    
 
-def main(chembl_code, protein_file, ligand_id):
+def main(args):
+
+    ### Parser
+    parser = argparse.ArgumentParser(description='Information to run PADIF-app')
+
+    parser.add_argument('chembl_code', help='ChEMBL ID associated with the target to work')
+    parser.add_argument('protein_file', help='Protein file in PDB format to dock all of compounds')
+    parser.add_argument('ligand_id', help='ID of ligand used to define grid for docking')
+    parser.add_argument('test_molecules', help='CSV file with ID and SMILES for molecules to test', default=None)
+
+    parsed_args = parser.parse_args(args)
 
     ### Download the ligands from chembl and change columns names
-    ligands, target_name = chembl_download(chembl_code)
-    ligands.to_csv(f'files/{target_name}_chembl_mols.csv', index=False)
+    ligands, target_name = chembl_download(parsed_args.chembl_code)
+    
+    ### Folder to work
+    parenr_dir = os.getcwd()
+    path_target = os.path.join(f"{parenr_dir}/files", target_name)
+    os.makedirs(path_target, exist_ok=True)
+
     ligands = ligands[['molecule_chembl_id', 'canonical_smiles']].rename(columns={'molecule_chembl_id':'id', 'canonical_smiles':'smiles'})
     
     print(
@@ -199,46 +244,103 @@ def main(chembl_code, protein_file, ligand_id):
         ********************************************************************************
         '''
     )
-    ### Standardize the smiles
-    ligands['smiles'] = Parallel(n_jobs=-1)(delayed(smiles_standardization)(smi) for smi in ligands.smiles)
-     print(f"""
-        Number of smiles that cannot be standardized in chembl ligands: {len(ligands[ligands['smiles'] == 'Error in smiles'])}
-    """
-    )
-    ligands = ligands[ligands['smiles'] != 'Error in smiles']
 
-    ### Protein preparation
-    parenr_dir = os.getcwd()
-    path_target = os.path.join(f"{parenr_dir}/files", target_name)
-    os.makedirs(path_target, exist_ok=True)
+    else : 
 
-    protein_process(f'files/{protein_file}', ligand_id, path_target, target_name)
+        ### SMILES standardization
+        ligands['smiles'] = Parallel(n_jobs=-1)(delayed(smiles_standardization)(smi) for smi in ligands.smiles)
+       
+        print(f"""
+            Number of smiles that cannot be standardized in chembl ligands: {len(ligands[ligands['smiles'] == 'Error in smiles'])}
+        """
+        )
 
-    temp, active_folder = active_docking(ligands, path_target, target_name)
-    
-    decoys, decoy_folder = decoy_docking(ligands, temp, path_target, target_name)
+        ligands = ligands[ligands['smiles'] != 'Error in smiles']
 
-    padif_extraction(ligands, decoys, active_folder, decoy_folder, path_target, target_name)
 
-    splitters = ['random', 'scaffold', 'fingerprint']
+        ligands.to_csv(f'{path_target}/{target_name}_chembl_mols.csv', index=False)
+        protein_process(f'files/{parsed_args.protein_file}', parsed_args.ligand_id, path_target, target_name)
 
-    split_datasets(splitters, path_target, target_name)
+        temp, active_folder = active_docking(ligands, path_target, target_name)
+        
+        decoys, decoy_folder = decoy_docking(ligands, temp, path_target, target_name)
+        decoys.to_csv(f'{path_target}/decoys_used.csv', index=False)
 
-    ### Train models
-    padif_train(target_name, splitters, path_target)
+        gc.collect()
 
-    ### Save figures and statistics
-    metrics_df, predictions_df = predictions_models(splitters, path_target)
-    figures_from_metrics(predictions_df, metrics_df, path_target)
+        padif = padif_extraction(ligands, decoys, active_folder, decoy_folder, path_target, target_name)
 
-    metrics_df.to_csv(f'{path_target}/metrics_of_models.csv', sep=',', index=False)
-    predictions_df.to_csv(f'{path_target}/predictions_of_models.csv', sep=',', index=False)
+        splitters = ['random', 'scaffold', 'fingerprint']
+
+        split_datasets(splitters, path_target, target_name)
+
+        ### Train models
+        padif_train(target_name, splitters, path_target)
+
+        ### Save figures and statistics
+        metrics_df, predictions_df = predictions_models(splitters, path_target)
+        figures_from_metrics(predictions_df, metrics_df, path_target)
+
+        metrics_df.to_csv(f'{path_target}/metrics_of_models.csv', sep=',', index=False)
+        predictions_df.to_csv(f'{path_target}/predictions_of_models.csv', sep=',', index=False)
+
+    ### Test compounds
+    if not os.path.isfile(f'files/{parsed_args.test_molecules}'):
+        print(
+            """
+            Test file missing, padif app is end 
+            """
+        )
+        ### Remove Bad files
+        gc.collect()
+        shutil.rmtree(temp)
+
+        sys.exit(1)
+    else:
+        test_df = pd.read_csv(f'files/{parsed_args.test_molecules}')
+        test_df['smiles'] = Parallel(n_jobs=-1)(delayed(smiles_standardization)(smi) for smi in test_df.smiles)
+
+        ### Filter by molecular weight
+        def molwt(smiles):
+            mol = dm.to_mol(smiles)
+            return dm.descriptors.mw(mol)
+
+        test_df['mw'] = Parallel(n_jobs=-1)(delayed(molwt)(smi) for smi in test_df.smiles)
+
+        test_df = test_df.loc[(test_df["mw"] >= 180.0) &
+                            (test_df["mw"] <= 600.0)]
+
+        print(f"""
+            Number of smiles that cannot be standardized in tested compounds: {len(test_df[test_df['smiles'] == 'Error in smiles'])}
+        """
+        )
+        test_df = test_df[test_df['smiles'] != 'Error in smiles']
+        other = test_df[test_df['smiles'] == 'Error in smiles']
+        test_df.to_csv(f'{path_target}/test_compounds.csv', index=False)
+
+        print(f"""
+            Number of compounds to dock: {len(test_df)}
+        """
+        )
+
+        test_folder, bad_ids = test_docking(test_df, ligands, temp, path_target, target_name)
+        
+        ### report bad tested molecules
+        bad_test = test_df[test_df.id.isin(bad_ids)]
+        pd.concat([bad_test, other], axis=0).reset_index(drop=True)
+        bad_test.to_csv(f'{path_target}/bad_tested_compounds.csv', index=False)
+
+        ### Extract PADIF
+        test_padif = padif_to_dataframe(test_folder, cavity_file=f'{path_target}/cavity.atoms', type='test')
+        test_padif = test_padif[~test_padif.id.isin(bad_ids)]
+        test_padif.to_csv(f'{path_target}/test_PADIF.csv', index=False)
+        prediction = test_predictions(padif, test_padif, path_target, splitters)
+        prediction.to_csv(f'{path_target}/test_predictions.csv', index=False)            
+
 
     ### Remove Bad files
     gc.collect()
     shutil.rmtree(temp)
 
 if __name__ == '__main__':
-    main(argv[1], argv[2], argv[3])
-
-
+    main(argv[1:])
