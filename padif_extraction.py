@@ -4,11 +4,8 @@ Python script for extract PADIF from docking solutions
 """
 
 import os
-from glob import glob
+from io import StringIO
 import pandas as pd
-import random
-from tqdm import tqdm
-import multiprocessing
 
 def padif_dataframe(file_path):
     with open(file_path, 'r') as file:
@@ -28,7 +25,6 @@ def padif_dataframe(file_path):
             table_content = record[table_start:table_end].strip()
             
             if table_content:
-                from io import StringIO
                 df = pd.read_csv(StringIO(table_content), delim_whitespace=True)
                 
                 # Pivot the DataFrame
@@ -39,7 +35,7 @@ def padif_dataframe(file_path):
                 df_single = df_pivot.pivot_table(index=[], columns='Metric', values='Value', aggfunc='first')
                 df_single = df_single.reset_index(drop=True)
 
-                # Add an identifier for this molecule based on the record
+                # Add an identifier and CHEMPLP score for this molecule based on the record
                 ligand_name = record.split('|')[1].split(' ')[-1].split('-')[0]
                 score = round(float(record.split('> <Gold.PLP.Fitness>')[1].split('> <Gold.PLP.PLP>')[0].strip()),3) 
                 df_single['id'] = ligand_name
@@ -56,15 +52,19 @@ targets = pd.read_parquet('files/targets_information.parquet')
 classes = ['decoys_dcm', 'decoys_znc', 'inactives']
 
 for target in targets.name:
+    ### Open and preprocess active PADIF for each actives compounds
     active_df = padif_dataframe(f'docking_solutions/{target}_actives_solutions.sdf')
     active_df['activity'] = 1
     for cl in zip(classes, ['dcm', 'div', 'true']):
+        ### For each decoy and inactive solutions extract PADIF
         decoys_df = padif_dataframe(f'docking_solutions/{target}_{cl[0]}_solutions.sdf')
         decoys_df['activity'] = 0
+        ### Concat both solutions, make sure that id, score and activity columns in the last position 
         padif = pd.concat([active_df, decoys_df])
         cols = ['id', 'score', 'activity']
         order = [col for col in padif.columns if col not in cols] + cols
         padif = padif[order]
+        ### For emty columns add 0 and save the parquet files
         padif = padif.fillna(0.0)
         padif.to_csv(f'padif/{target}_{cl[1]}.parquet', index=False)
 
