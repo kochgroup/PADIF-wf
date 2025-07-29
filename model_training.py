@@ -3,6 +3,7 @@ Python script for split and train machine learning models
 """
 
 import os
+import unittest
 import pandas as pd
 from tqdm import tqdm
 from deepchem import data, splits
@@ -178,6 +179,35 @@ def split_datasets(splitters, path_target, target_name, tp):
         path = f'{data_to_model}/{splitter}'
         to_split(target=target_name, padif_folder=path_target, path_to_work=path, tp=tp, method=splitter)
 
+class TestSplitFunctions(unittest.TestCase):
+
+    def setUp(self):
+        # Sample dataframe for testing, with 'activity' and mock features
+        self.df = pd.DataFrame({
+            'smiles': ['CCO', 'CCN', 'CCC', 'CCCl', 'CCBr', 'CCI', 'CCF', 'CCSH', 'CCNH2', 'CCO2'],
+            'feature1': range(10),
+            'feature2': range(10,20),
+            'activity': [1, 0]*5
+        })
+
+    def test_random_stratify_split(self):
+        train, test = random_stratify_split(self.df.copy())
+        # Check types and stratification
+        self.assertIsInstance(train, pd.DataFrame)
+        self.assertIsInstance(test, pd.DataFrame)
+        # Actives proportion in both sets is roughly equal
+        train_prop = train.activity.mean()
+        test_prop = test.activity.mean()
+        self.assertAlmostEqual(train_prop, test_prop, delta=0.2)
+
+    def test_molecular_stratify_split_invalid(self):
+        # Should print error and return None/None if method is invalid
+        train, test = molecular_stratify_split(self.df.copy(), 'nonexistent')
+        self.assertIsNone(train)
+        self.assertIsNone(test)
+
+if __name__ == '__main__':
+    unittest.main()
 
 ### Split and train
 df = pd.read_parquet("files/targets_information.parquet")
